@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "silo-amp"
+version = "0.1.0"
+description = "Reproducible SILO AMP run boundary"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+silo-run-config = "silo_amp.run_config:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["silo_amp"]
+
+[tool.uv]
+package = true
+

@@ -1,0 +1,32 @@
+Training data:
+1. AMPDiffusion data_: DRAMP 3.0 + APD3 + DBAASP (19,670 unique training sequences)
+https://github.com/szczurek-lab/ampdiffusion-starter-kit/tree/main/data/training.fasta
+2. GRAMPA (mic_data.csv)
+https://github.com/szczurek-lab/hydramp-starter-kit/tree/main/data -> GRAMPA (Witten & Witten)
+3. unlabelled_positive.csv (Known AMP sequences (positives)) -> dbAMP, DRAMP, AMP Scanner
+
+Total sequences after merging, deduplication, and 8-50 length limits: 21881
+
+
+TOP 100 selection criteria:
+
+AMPDiffusion filtering criteria: https://github.com/szczurek-lab/ampdiffusion-starter-kit/tree/main
+(Torres et al. 2025)
+
+1. Activity: every library sequence is scored by the APEX ensemble (8 models) for mean predicted MIC across the 11-pathogen panel; 
+candidates are taken most-potent-first, preferring those with MIC ≤ 64 µM.
+
+2. Novelty: drop any peptide with > 0.60 local-alignment similarity to a known AMP (the DRAMP/APD3/DBAASP training set in data/training/).
+
+3. Diversity: among the remaining peptides, of any pair more than 0.40 local-alignment similar, keep only the one with the lower predicted MIC. 
+The 100 most-potent peptides passing all three criteria form the top-100; if the ≤ 64 µM pool yields fewer than 100, 
+the remaining slots are filled by the next-most-potent peptides beyond the cut.
+
+4. A final guard enforces the challenge's own < 80% Levenshtein rule vs data/antibacterial.fasta.
+
+
+Physicochemical Properties calculation + distributional set (https://www.biorxiv.org/content/10.1101/2024.03.03.583201v1.full.pdf)
+Generated peptides from AMP-Diffusion were benchmarked against those from other models and compared with natural AMPs (the training data).
+
+
+1. Selectivity metric: https://www.nature.com/articles/s41551-024-01201-x
