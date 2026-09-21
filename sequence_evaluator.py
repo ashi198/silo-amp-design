@@ -3,11 +3,11 @@ import numpy as np
 from config import SequenceConfig
 import os, ray, torch
 from sequence_design import SequenceDesign
-from evaluation_metrics.utils import APEXEnsemble
+from evaluation_metrics.utils import APEXEnsemble, OmegAMPScorer
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 from Bio import Align
-from evaluation_metrics.utils import read_fasta_sequences, check_amp_synthesizability, check_sequence_for_hydrophobic_clusters
+from evaluation_metrics.utils import read_fasta_sequences, check_amp_synthesizability, novelty_against_reference
 from evaluation_metrics.metrics_utils import local_similarity
 STANDARD_ALPHABET = frozenset("ACDEFGHIKLMNPQRSTVWY")
 
@@ -27,6 +27,7 @@ class SequenceEvaluator:
         self.device = torch.device("cpu") if device is None else device
         self.predictor_workers = [PredictorWorker.remote(self.config, self.device) for _ in range(self.config.num_predictor_workers)] 
         self.apex_ensemble = APEXEnsemble(self.config, self.device)
+        self.OmegAMPScorer = OmegAMPScorer('/home/akhanna/AMP/SILO_amp_new/OmegAMP')
         self.peptide_checks = PeptideChecks(self.config)
 
     def calculate_apex_scores(self, sequences:List[Union[SequenceDesign, str]]):
@@ -50,6 +51,17 @@ class SequenceEvaluator:
             seq.apex_dict["apex_mic90"] = float(np.quantile(scores, 0.90))
 
         return np.mean(mic_scores, axis=1)
+    
+    def calculate_omegAMP_probs(self, sequences:List[Union[SequenceDesign, str]]):
+        if not isinstance(sequences[0], str): 
+            seq_list = [seq.seq_string for seq in sequences]
+        else:
+            seq_list = sequences
+        seq_list = np.array(seq_list)
+        prob_scores = self.OmegAMPScorer.predict(seq_list)
+        for i, (seq, scores) in enumerate(zip(sequences, prob_scores['omegamp_amp_prob'])):
+            seq.omegAMP_prob = scores
+        return prob_scores['omegamp_amp_prob']
     
 class PeptideChecks:
     def __init__(self, config):
@@ -79,8 +91,7 @@ class PeptideChecks:
     def synthesis_based_masking(self, candidates):
         mask: list[bool] = []
         for seq in candidates:
-            valid = (check_sequence_for_hydrophobic_clusters(seq['peptide']) 
-                     and check_amp_synthesizability(sequence=seq['peptide']))
+            valid = check_amp_synthesizability(sequence=seq['peptide'])
             mask.append(valid)
 
         valid_sequences = [sequence for sequence, valid in zip(candidates, mask) if valid]
@@ -94,7 +105,7 @@ class SelectionPolicy:
     marlys_identity_limit: float = 0.80
     charge_range: tuple[float, float] = (2.0, 10.0)
     hydrophobicity_range: tuple[float, float] = (-0.5, 0.8)
-    hydrophobic_moment_cutoff: float = (0.2, 0.6), 
+    hydrophobic_moment_cutoff: tuple[float, float]  = (0.3, 0.6)
     max_cysteines: int = 1
     max_hydrophobic_run: int = 3
     diversity_similarity_limit: float = 0.40
@@ -111,16 +122,7 @@ def _inc(result: SelectionResult, candidate_id: str, reason: str) -> None:
     result.rejection_counts[reason] = result.rejection_counts.get(reason, 0) + 1
     result.rejection_reasons.setdefault(candidate_id, []).append(reason)
 
-
 def _valid_top(candidate: Mapping[str, Any], policy: SelectionPolicy) -> str | None:
-    try:
-        mic = float(candidate["mean_predicted_mic"])
-    except (KeyError, TypeError, ValueError):
-        return "missing_mic"
-    if not bool(candidate.get("marlys_identity_pass", False)):
-        return "marlys identity over 80%"
-    if not bool(candidate.get("passes_levenshtein_check", False)):
-        return "levenshtein identity over 80%"
     charge = candidate.get("charge")
     hydrophobicity = candidate.get("hydrophobicity")
     hydrophobic_moment = candidate.get("amphipathicity")
@@ -130,19 +132,95 @@ def _valid_top(candidate: Mapping[str, Any], policy: SelectionPolicy) -> str | N
         return "hydrophobicity"
     if hydrophobic_moment is None or not policy.hydrophobic_moment_cutoff[0]  <= float(hydrophobic_moment) <= policy.hydrophobic_moment_cutoff[1]:
         return "amphipathicity"
-    if int(candidate.get("cysteine_count", -1)) > policy.max_cysteines:
+    if int(candidate.get("cysteine_count")) > policy.max_cysteines + 1:
         return "cysteine_count"
+    if int(candidate.get("proline_per")) > 0.20:
+        return "proline content more than 20% of residues"
     if int(candidate.get("max_hydrophobic_run", policy.max_hydrophobic_run + 1)) > policy.max_hydrophobic_run:
         return "hydrophobic_run"
+    if "GGG" in candidate.get("sequence"):
+        return "more than 2 consecutive glycines"
+    if not bool(candidate.get("marlys_identity_pass", False)):
+        return "marlys identity over 80%: reject a candidate if an actual local alignment has pident > 80% and covers at least 80% of that generated candidate"
     return None
+
+def get_novelty(candidate, novelty_cache, 
+                      training_ref_amps, antibacterial_ref_amps):
+    """Run novelty check once per unique sequence."""
+    sequence = candidate["sequence"]
+
+    if sequence not in novelty_cache:
+        novelty_cache[sequence] = novelty_against_reference(
+            candidate,
+            training_ref_amps,
+            antibacterial_ref_amps,
+        )
+
+    return novelty_cache[sequence]
+
+
+def passes_diversity(candidate, policy, selected):
+    """Candidate must be sufficiently different from all selected peptides."""
+    sequence = candidate["sequence"]
+
+    for chosen in selected:
+        similarity = local_similarity(
+            sequence,
+            chosen,
+        )
+        if similarity > policy.diversity_similarity_limit:
+            return False
+
+    return True
+
+
+def try_add_candidate(candidate, selected_sequences, result, novelty_cache, 
+                      training_ref_amps, antibacterial_ref_amps, policy):
+    """
+    Add candidate to final selection only if it:
+      - has not already been selected
+      - passes diversity
+      - passes both reference novelty checks
+    """
+
+    sequence = candidate["sequence"]
+    candidate_id = str(
+        candidate.get("id", "<missing-id>")
+    )
+
+    # Already selected from another category
+    if sequence in selected_sequences:
+        return False, {}
+
+    # Too similar to a previously selected peptide
+    if not passes_diversity(candidate, policy, selected_sequences):
+        _inc(result, candidate_id, "diversity")
+        return False, {}
+
+    # Check novelty against training + antibacterial references
+    novelty = get_novelty(candidate, novelty_cache, 
+                      training_ref_amps, antibacterial_ref_amps)
+
+    if not (
+        novelty["passes_local_similarity_check"]
+        and novelty["passes_ab_novelty"]
+    ):
+        _inc(result, candidate_id, "reference_novelty")
+        return False, novelty
+
+    return True, novelty
+
 
 def select_candidates(
     candidates: Iterable[Mapping[str, Any]],
     *,
     references: Iterable[str] = (),
     marlys_references: Iterable[str] = (),
+    training_amps: Iterable[str] = (),
     policy: SelectionPolicy = SelectionPolicy(),
     top_k: int = 100,
+    activity_threshold: float = 64.0, 
+
 ) -> SelectionResult:
     """Validate a candidate population and greedily select a diverse top-K.
 
@@ -154,8 +232,9 @@ def select_candidates(
     """
     if top_k < 1:
         raise ValueError("top_k must be positive")
-    reference_set = set(references)
+    reference_set = set([sequence for _, sequence in references])
     marlys_set = set(marlys_references)
+
     result = SelectionResult(selected=[], valid_50k=[])
     seen: set[str] = set()
 
@@ -173,34 +252,160 @@ def select_candidates(
         seen.add(sequence)
         result.valid_50k.append(candidate)
 
-    ranked = sorted(
-        result.valid_50k,
-        key=lambda item: (
-            float(item.get("mean_predicted_mic", float("inf"))),
-            str(item["sequence"]),
-            str(item.get("id", "")),
-        ),
-    )
-    eligible: list[dict[str, Any]] = []
-    for candidate in ranked:
+    # 2. select eligible sequences based on synthesizability based criteria 
+
+    top_valid: list[dict[str, Any]] = []
+    for candidate in result.valid_50k:
         candidate_id = str(candidate.get("id", "<missing-id>"))
         top_reason = _valid_top(candidate, policy)
         if top_reason:
             _inc(result, candidate_id, top_reason)
             continue
-        if any(
-            local_similarity(candidate["sequence"], chosen["sequence"])
-            > policy.diversity_similarity_limit
-            for chosen in eligible
-        ):
-            _inc(result, candidate_id, "diversity")
-            continue
-        eligible.append(candidate)
-        if len(eligible) == top_k:
-            break
+        top_valid.append(candidate)
 
-    result.selected = [dict(item, rank=rank) for rank, item in enumerate(eligible, 1)]
+
+    # Selection for GN pool: # selectivity -> then lower mean MIC
+    broad_pool = sorted([x for x in top_valid if (min(x["apex_GP_mic50"], x["apex_GN_mic50"]) / max(x["apex_GP_mic50"], x["apex_GN_mic50"])) >= 0.9  
+                   and x["apex_mic90"] < activity_threshold],   key=lambda x: (
+        # Most important: activity across many strains
+        (x["apex_mic90"]), str(x["sequence"]),),)
+    
+
+    # Selection for GP pool: # mean GP MIC -> selectivity 
+    gp_pool = sorted(
+        [
+            x for x in top_valid
+            if x["gram_positive_selectivity"] < 0.8
+            and x["apex_GP_mic90"] < activity_threshold
+        ],
+        key=lambda x: (
+            x["apex_GP_mic90"],  # descending MIC90
+            x["gram_positive_selectivity"], # tie-breaker: lower selectivity first
+            str(x["sequence"]),
+        ),
+    )
+    
+    # Selection for GN pool: # mean GN MIC -> selectivity 
+    gn_pool = sorted(
+        [
+            x for x in top_valid
+            if x["gram_negative_selectivity"] < 0.5
+            and x["apex_GN_mic90"] < activity_threshold
+        ],
+        key=lambda x: (
+            x["apex_GN_mic90"],  # descending MIC90
+            x["gram_negative_selectivity"], # tie-breaker: lower selectivity first
+            str(x["sequence"]),
+        ),
+    )
+
+
+    mdr = sorted([x for x in top_valid if (x["apex_mdr_mic90"]) < 64], 
+                        key=lambda x: (x["apex_mdr_mic90"], str(x["sequence"]),),)
+
+    # 3. Construct category-specific pools
+    overall_pool = sorted([x for x in top_valid if x["apex_mic90"] < activity_threshold],
+    key=lambda x: (
+        x["apex_mic90"],
+        str(x["sequence"]),
+        str(x.get("id", "")),
+    ))
+    
+    pools = {
+    "overall": overall_pool,
+    "mdr": mdr,
+    "GN_selective": gn_pool,
+    "GP_selective": gp_pool,
+    "broad_spectrum": broad_pool,}
+
+    # Equal quotas by default.
+    # top_k=100 -> exactly 25 each.
+    base = top_k // 5
+    quotas = {
+        "overall": base + (top_k % 4),
+        "GN_selective": base,
+        "GP_selective": base,
+        "broad_spectrum": base,
+        "mdr": base
+
+    }
+
+    gp_fallback = []
+    remaining_quota = 0
+    if len(gp_pool) < quotas["GP_selective"]:
+        remaining_quota = quotas["GP_selective"] - len(gp_pool)
+
+        # Prevent selecting the same sequence twice
+        selected_sequences = {str(x["sequence"]) for x in gp_pool}
+
+        gp_fallback = sorted(
+            [
+                x for x in top_valid
+                if str(x["sequence"]) not in selected_sequences
+                and x["gram_positive_selectivity"] < 0.8
+                and x["apex_GP_mic50"] < activity_threshold
+            ],
+            key=lambda x: (
+                x["apex_GP_mic50"],              # fallback: lower MIC50 is better
+                x["gram_positive_selectivity"],
+                str(x["sequence"]),
+            ),
+        )
+
+    gp_pool.extend(gp_fallback[:remaining_quota])
+
+    broad_pool = []
+    if len(broad_pool) < quotas["broad_spectrum"]:
+        remaining_quota = quotas["broad_spectrum"] - len(broad_pool)
+
+        # Prevent selecting the same sequence twice
+        selected_sequences = {str(x["sequence"]) for x in broad_pool}
+
+        bs_fallback = sorted([x for x in top_valid if (min(x["apex_GP_mic50"], x["apex_GN_mic50"]) / max(x["apex_GP_mic50"], x["apex_GN_mic50"])) >= 0.9  
+                   and x["apex_mic50"] < activity_threshold],   key=lambda x: (
+        # Most important: activity across many strains
+        (x["apex_mic50"]), str(x["sequence"]),),)
+
+    broad_pool.extend(bs_fallback[:remaining_quota])
+
+    # 4. Shared final-selection
+    category_order = ["GP_selective", "GN_selective", "broad_spectrum", "overall", "mdr"]
+    selected = []
+    selected_sequences = set()
+    novelty_cache = {}
+
+    for category in category_order:
+        count = 0
+        for candidate in pools[category]:
+            if count >= quotas[category]:
+                break
+            state, novelty = try_add_candidate(candidate, selected_sequences, result, novelty_cache, training_amps
+                                                ,references, policy)
+            if state:
+                selected_candidate = dict(candidate)
+                selected_candidate["selection_category"] = category
+                selected_candidate.update(novelty)
+                selected.append(selected_candidate)
+                selected_sequences.add(sequence)
+                count += 1
+
+    # backfill if a category could not be completely filled 
+    if len(selected) < top_k:
+        for candidate in overall_pool:
+            if len(selected) >= top_k:
+                break
+            state, novelty = try_add_candidate(candidate, selected_sequences, result, novelty_cache, training_amps
+                                                ,references, policy)
+            if state:
+                selected_candidate = dict(candidate)
+                selected_candidate["selection_category"] = "overall"
+                selected_candidate.update(novelty)
+                selected.append(selected_candidate)
+                selected_sequences.add(sequence)
+
+    result.selected = [dict(item, rank=rank) for rank, item in enumerate(selected, 1)]
     return result
+
 
 def _valid_basic(candidate: Mapping[str, Any], references: set[str], marlys_set: set[str], policy: SelectionPolicy) -> str | None:
     sequence = candidate.get("sequence")
