@@ -51,9 +51,6 @@ class SequenceConfig:
         self.training_fasta = './training/training_data/final_SILO_training_dataset.fasta'
         self.marlys_fasta = './objectives/reference_data/marlys.fasta'
         self.antibacterial_fasta = './objectives/reference_data/antibacterial.fasta'
-
-        self.antibacterial_repre_seq_fasta = './objectives/reference_data/antibacterial_ref.fasta'
-        self.training_repre_seq_fasta = './objectives/reference_data/training_ref.fasta'
         
         self.load_checkpoint_from_path = '/home/akhanna/AMP/SILO_amp/results/pretrain/8_50_PE_valid_mask_LD_512_BL_10_head_16/42/best_model.pt' # THIS HAS TO BE SET IF whether_inference is True
         self.if_pretrain = False
@@ -103,5 +100,3 @@ class SequenceConfig:
             "VRE_faecalis": "vancomycin-resistant E. faecalis ATCC 700802",
             "VRE_faecium": "vancomycin-resistant E. faecium ATCC 700221",
         }
-
-
