@@ -21,7 +21,7 @@ class SequenceTransformer(nn.Module):
 
         # Transformer encoders
         self.encoders = nn.ModuleList([
-            TransformerEncoderWithFlashAttention(config = config, d_model = self.latent_dim, nhead = self.num_heads, dropout=config.dropout)
+            TransformerEncoder(config = config, d_model = self.latent_dim, nhead = self.num_heads, dropout=config.dropout)
             for _ in range(config.num_transformer_blocks)
             ])
         
@@ -69,9 +69,9 @@ def dict_to_cpu(dictionary):
             cpu_dict[key] = value
     return cpu_dict
 
-class TransformerEncoderWithFlashAttention(nn.Module):
+class TransformerEncoder(nn.Module):
     def __init__(self, config: SequenceConfig, d_model, nhead, dropout):
-        super(TransformerEncoderWithFlashAttention, self).__init__()
+        super(TransformerEncoder, self).__init__()
         self.layer_norm1 = nn.LayerNorm(d_model)
         self.layer_norm2 = nn.LayerNorm(d_model)
         self.config = config
