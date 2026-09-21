@@ -60,6 +60,7 @@ class SequenceDesign(BaseTrajectory):
 
         # Keep track of all objectives 
         self.objective: Optional[float] = None
+        self.omegAMP_prob = None
         self.apex_mean_score: Optional[float] = None
         self.apex_dict = {
             "A_baumannii": None,
