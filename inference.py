@@ -13,7 +13,8 @@ from config import SequenceConfig
 from sequence_evaluator import SequenceEvaluator
 from utils import inference, set_seed
 from evaluation_metrics.utils import read_fasta_return_sequence_list, BigLibraryMetrics
-from model.transformer_architecture import SequenceTransformer, dict_to_cpu
+from model.transformer_architecture import SequenceTransformer
+import pandas as pd
 
 from utils import write_submission_artifacts
 from sequence_evaluator import SelectionPolicy, select_candidates
@@ -25,10 +26,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SILO AMP inference-only runtime")
-    parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--output_dir", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path, default='/home/akhanna/AMP/SILO_amp_new/results/FT_3_1_GP_with_mean_obj_GP_mean_1/42')
+    parser.add_argument("--output_dir", type=Path, default='/home/akhanna/AMP/SILO_amp_new/results/FT_3_1_GP_with_mean_obj_GP_mean_1/42')
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--total-peptide-count", type=int, default=50000)
     parser.add_argument("--top-k", type=int, default=100)
     return parser
@@ -55,12 +56,14 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     config.self_improvement_learning["deterministic"] = True
     config.self_improvement_learning["devices_for_workers"] = [args.device]
     os.makedirs(output_dir, exist_ok=True)
-    big_library_worker = BigLibraryMetrics(config, config.training_device)
 
+    evaluator = SequenceEvaluator(config, torch.device(args.device))
+    big_library_worker = BigLibraryMetrics(config, config.training_device, evaluator)
     network = SequenceTransformer(config, config.training_device)
 
     set_seed(args.seed)
     checkpoint = torch.load(os.path.join(checkpoint_path, "best_model.pt"), weights_only=False)
+
     network.load_state_dict(checkpoint["model_weights"])
     print(f"Loading checkpoint from path {checkpoint_path} for inference")
 
@@ -73,25 +76,27 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
         if not ray.is_initialized():
             ray.init(ignore_reinit_error=True, log_to_driver=False)
             started_ray = True
-
-        evaluator = SequenceEvaluator(config, torch.device(args.device))
         print(f"Policy network is on device {config.training_device}")
         network.to(network.device)
         network.eval()
 
         network_weights = copy.deepcopy(network.get_weights())
 
-        generated_50k_fasta_path = inference(
+        '''generated_50k_fasta_path = inference(
             epoch="submission",
             config=config,
             network_weights=network_weights,
             evalutor=evaluator)
-        
-        generated_50k_df, full_data_analyis = big_library_worker.calculate_metrics_big_library(config, generated_50k_fasta_path, config.training_fasta, config.antibacterial_fasta)
+
+        generated_50k_df, full_data_analyis = big_library_worker.calculate_metrics_big_library(config, generated_50k_fasta_path)'''
+
+        generated_50k_df = pd.read_csv('/home/akhanna/AMP/SILO_amp_new/results/FT_3_1_GP_with_mean_obj_GP_mean_1/42/library_50k.csv')
+        generated_50k_fasta_path = '/home/akhanna/AMP/SILO_amp_new/results/FT_3_1_GP_with_mean_obj_GP_mean_1/42/generated_50k_peptides_library.fasta'
         records = candidate_records_from_metrics(generated_50k_df.to_dict("records"))
-        references = [sequence for _, sequence in read_fasta_return_sequence_list(config.antibacterial_fasta)]
+        references = read_fasta_return_sequence_list(config.antibacterial_fasta)
         marlys_set = [sequence for _, sequence in read_fasta_return_sequence_list(config.marlys_fasta)]
-        selection = select_candidates(records, references=references, marlys_references=marlys_set, policy=SelectionPolicy(), top_k=args.top_k)
+        training_set = read_fasta_return_sequence_list(config.training_fasta)
+        selection = select_candidates(records, references=references, training_amps=training_set, marlys_references=marlys_set, policy=SelectionPolicy(), top_k=args.top_k)
         return write_submission_artifacts(
             output_dir,
             selection.valid_50k,
