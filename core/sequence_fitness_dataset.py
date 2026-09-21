@@ -143,8 +143,8 @@ class SequenceFitnessDataset:
             residues = seq.residues, 
             objective = seq.objective,
             apex_mean_score = seq.apex_mean_score, 
-            objective_dict= seq.apex_dict)
-        
+            objective_dict= seq.apex_dict,
+            omegaAMP_prob = seq.omegAMP_prob)
         return instances_dict
     
     
@@ -160,26 +160,6 @@ def async_sbs_worker(config: Config, job_pool: JobPool, network_weights: dict,
     def child_log_probability_fn(trajectories: List[SequenceDesign]) -> [np.array]:
         return SequenceDesign.log_probability_fn(config = config, trajectories=trajectories, network=network, device=device)
     
-
-    '''def batch_leaf_evaluation_fn(trajectories: List[SequenceDesign]) -> np.array:
-
-        """
-            Make mic prediction scores from APEX predictor model 
-
-        """
-
-        # First do sequence check 
-
-        passed_masked = objective_evaluator.peptide_checks.basic_validity_mask(trajectories, seen_protein_smiles)
-        passed_sequences = [seq for seq, passed in zip(trajectories, passed_masked) if passed]
-
-        objs = objective_evaluator.calculate_apex_scores(passed_sequences)
-
-        for seq, score in zip(trajectories, objs):
-            seq.objective = float(score)
-
-        return objs'''
-    
     def get_apex_category_scores(seq, keys):
         return np.array(
             [seq.apex_dict[k] for k in keys],
@@ -187,7 +167,7 @@ def async_sbs_worker(config: Config, job_pool: JobPool, network_weights: dict,
 
     def get_apex_category_mean(seq, keys):
         scores = get_apex_category_scores(seq, keys)
-        return float(np.mean(scores))
+        return scores
     
     
     def batch_leaf_evaluation_fn(trajectories: List[SequenceDesign]) -> np.array:
@@ -202,16 +182,24 @@ def async_sbs_worker(config: Config, job_pool: JobPool, network_weights: dict,
         APEX_GRAM_POSITIVE = ["S_aureus", "MRSA", "VRE_faecalis", "VRE_faecium"]
 
         objs = objective_evaluator.calculate_apex_scores(trajectories)
+        amp_probs= objective_evaluator.calculate_omegAMP_probs(trajectories)
 
         for seq in trajectories:
-            seq.apex_dict["apex_gram_negative_mean"] = get_apex_category_mean(seq, APEX_GRAM_NEGATIVE)
-            seq.apex_dict["apex_gram_positive_mean"] = get_apex_category_mean(seq,APEX_GRAM_POSITIVE)
-            seq.objective = seq.apex_mean_score
+            GN_scores = get_apex_category_mean(seq, APEX_GRAM_NEGATIVE)
+            GP_scores = get_apex_category_mean(seq, APEX_GRAM_POSITIVE)
+            seq.apex_dict["apex_gram_negative_mean"] = float(np.mean(GN_scores))
+            seq.apex_dict["apex_gram_positive_mean"] = float(np.mean(GP_scores))
+
+            GN_mic90 = np.quantile(GN_scores,0.90,method="higher")
+            GP_mic90 = np.quantile(GP_scores,0.90,method="higher")
+            
+            seq.objective = 0.5 * seq.apex_dict["apex_gram_negative_mean"] + seq.apex_dict["apex_gram_positive_mean"]
+            #seq.objective = 0.5 * GN_mic90 + 0.8 * GP_mic90
 
             # Calculate selectivity: 
             # Metric taken from https://www.nature.com/articles/s41551-024-01201-x 
-            gram_neg_median = np.median(get_apex_category_scores(seq, APEX_GRAM_NEGATIVE))
-            gram_pos_median = np.median(get_apex_category_scores(seq, APEX_GRAM_POSITIVE))
+            gram_neg_median = np.median(GN_scores)
+            gram_pos_median = np.median(GP_scores)
 
             seq.apex_dict["gram_negative_selectivity"] = (gram_neg_median / gram_pos_median)
             seq.apex_dict["gram_positive_selectivity"] = (gram_pos_median / gram_neg_median)
