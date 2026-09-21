@@ -21,22 +21,22 @@ def parse_args():
     
     parser.add_argument("--epoches",
                         type=int,
-                        default=200,
+                        default=100,
                         help="Number of epoches for training")
     
     parser.add_argument("--device",
                         type=str,
-                        default='cuda:0',
+                        default='cuda:1',
                         help="specify device name: either cuda:gpu_num (cuda:0) or cpu")
     
     parser.add_argument("--results",
                         type=str,
-                        default="./results/pretrained_finetune_mean_top_20_train_last_3_encoder",
+                        default="./results/with_extra_filters",
                         help="specify directory for storing results")
     
     parser.add_argument("--comments",
                         type=str,
-                        default="pretrained_finetune_mean_top_20_obj_train_last_3_encoder",
+                        default="with_extra_filters",
                         help="type of experiment")
     
     
@@ -192,7 +192,7 @@ def main(args):
                 
                 else:
                     num_bad_epochs += 1
-                    print(f">> Validation. Best MIC so far: {best_validation_metric}")
+                    print(f">> Validation mean MIC for top 20 {val_metric}. Best mean MIC for top 20 sequences so far: {best_validation_metric}")
                     print(f"No improvement for {num_bad_epochs}/{patience} epochs.")
 
                 save_checkpoint(checkpoint, "last_model.pt", config)
@@ -211,7 +211,6 @@ def main(args):
 
     print("------")
     print('Inference with trained policy')
-
     args.checkpoint = config.results_path
     args.output_dir = config.results_path
     args.seed = config.seed
