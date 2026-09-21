@@ -217,10 +217,10 @@ def mmseqs_marlys_similarity(config, query_fasta, marlys_fasta: str, identity_th
     mmseqs_tmp = os.path.join(mmseq_dir, "mmseqs_tmp")
 
     # run mmseq2 command 
-    # Parameters for running for peptides from here https://github.com/soedinglab/MMseqs2/issues/373
+    # Parameters for running for peptides from here https://www.biorxiv.org/content/10.64898/2026.09.01.747572v1.full.pdf
 
-    command = ["mmseqs", "easy-search", query_fasta, marlys_fasta, output_tsv,  mmseqs_tmp, "-k", "5", "--mask", "0", "--comp-bias-corr", "0",
-        "--min-aln-len", "8", "-s", "7.5", "-e", "inf", "--format-output", "query,target,pident,alnlen,qlen,tlen,evalue,bits", 
+    command = ["mmseqs", "easy-search", query_fasta, marlys_fasta, output_tsv,  mmseqs_tmp, "--comp-bias-corr", "0",
+        "--prefilter-mode", "2", "-e", "1000", "--alignment-mode", "3", "-c", "0.8", "--cov-mode", "2", "--format-output", "query,target,pident,alnlen,qlen,tlen,evalue,bits", 
         "--threads", "16"]
     
     subprocess.run(command,check=True)
@@ -255,100 +255,6 @@ def mmseqs_marlys_similarity(config, query_fasta, marlys_fasta: str, identity_th
 
     return results
 
-
-'''def novelty_against_reference(seq, training_amps, antibacterial_reference_amps, train_threshold=0.60,
-    ab_threshold=0.80):
-
-    """
-    references should look like:
-    [
-        {
-            "id": "DRAMP00001",
-            "sequence": "KWKLFKKIEKVGQNIRDGIIKAGPAVAVVGQATQIAK"
-        },
-        ...
-
-        The method run local similarity and Levenshtein ratio checks only with the representative sequences from antibacterial.fasta
-        and marlys.fasta file
-    ]
-    """
-
-    records = {
-        "sequence": None,
-        "id": None,
-        # for training data matching
-        "training_data_novelty": None,
-        "max_train_reference_similarity": None,
-        "passes_local_similarity_check": None,
-        "closest_train_reference_id": None,
-        "closest_train_reference_sequence": None,
-
-        # for antibacterial.fasta matching 
-        "ab_data_novelty": None,
-        "max_ab_reference_similarity": None,
-        "passes_ab_novelty": None,
-        "closest_ab_reference_id": None,
-        "closest_ab_reference_sequence": None,
-
-    }
-
-    train_best_similarity = -1.0
-    train_best_reference = None
-    passes_train = True
-    
-    anti_best_similarity = -1.0
-    anti_best_reference = None
-    passes_ab = True
-
-
-    for ref in training_amps: 
-        similarity = local_similarity(seq[1], ref[1])
-        
-        if similarity > train_best_similarity:
-            train_best_similarity = similarity
-            train_best_reference = ref
-
-        if similarity >= train_threshold:
-            passes_train = False
-            train_best_similarity = 1.0
-            break
-
-    for anti_ref in antibacterial_reference_amps:
-        lv_similarity = Levenshtein.ratio(seq[1], anti_ref[1])
-    
-        if lv_similarity > anti_best_similarity:
-            anti_best_similarity = lv_similarity
-            anti_best_reference = anti_ref
-                
-        if lv_similarity >= ab_threshold:
-            passes_ab = False
-            anti_best_similarity = 1.0
-            break
-
-    records = {
-        "id": seq[0],
-        "sequence": seq[1],
-
-        # Training data
-        "training_data_novelty": 1.0 - train_best_similarity,
-        "max_train_reference_similarity": train_best_similarity,
-        "passes_local_similarity_check": passes_train,
-        "closest_train_reference_id":
-            train_best_reference[0] if train_best_reference is not None else None,
-        "closest_train_reference_sequence":
-            train_best_reference[1] if train_best_reference is not None else None,
-
-        # Antibacterial reference
-        "ab_data_novelty": 1.0 - anti_best_similarity,
-        "max_ab_reference_similarity": anti_best_similarity,
-        "passes_ab_novelty": passes_ab,
-        "closest_ab_reference_id":
-            anti_best_reference[0] if anti_best_reference is not None else None,
-        "closest_ab_reference_sequence":
-            anti_best_reference[1] if anti_best_reference is not None else None,
-    }
-    return records'''
-
 def novelty_against_reference(seq, training_amps, antibacterial_reference_amps):
 
     """
@@ -368,20 +274,18 @@ def novelty_against_reference(seq, training_amps, antibacterial_reference_amps):
     anti_best_reference = None
 
     for ref in training_amps: 
-        similarity = local_similarity(seq[1], ref[1])
+        similarity = local_similarity(seq["sequence"], ref[1])
         if similarity > train_best_similarity:
             train_best_similarity = similarity
             train_best_reference = ref
 
     for anti_ref in antibacterial_reference_amps:
-        lv_similarity = Levenshtein.ratio(seq[1], anti_ref[1])
+        lv_similarity = Levenshtein.ratio(seq["sequence"], anti_ref[1])
         if lv_similarity > anti_best_similarity:
             anti_best_similarity = lv_similarity
             anti_best_reference = anti_ref
 
     return {
-        "sequence": seq[1],
-        "id": seq[0],
         # for training data matching
         "training_data_novelty": 1.0 - train_best_similarity,
         "max_train_reference_similarity": train_best_similarity,
