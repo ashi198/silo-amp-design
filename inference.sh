@@ -1,5 +1,5 @@
-checkpoint="./results/pretrained_finetune_mean_top_20_train_last_3_encoder/42"
-output_dir="./results/pretrained_finetune_mean_top_20_train_last_3_encoder/42"
+checkpoint="/home/akhanna/AMP/SILO_amp_new/results/FT_3_1_GP_with_mdr/42"
+output_dir="/home/akhanna/AMP/SILO_amp_new/results/FT_3_1_GP_with_mdr/42"
 seed=42
 device="cuda:0"
 total_peptide_count=50000
