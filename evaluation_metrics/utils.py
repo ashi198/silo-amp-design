@@ -11,7 +11,54 @@ from seqme.metrics import Uniqueness, Diversity, ConformityScore
 from evaluation_metrics.metrics_utils import novelty_against_reference, mmseqs_marlys_similarity, calculate_clustering_coverage, calculate_physchem_prop, precalculate_embeddings, calculate_hydrophobicmoment, calculate_distributional_embeddings_esm, calculate_charge, calculate_hydrophobicity
 from Bio import SeqIO
 
+OMEGAMP_ROOT = Path(__file__).resolve().parents[1] / "OmegAMP"
+if str(OMEGAMP_ROOT) not in sys.path:
+    sys.path.insert(0, str(OMEGAMP_ROOT))
 
+from project.classifiers import AMPClassifier
+
+
+class OmegAMPScorer:
+    MODEL_FILES = {
+        "amp": "broad-classifier.json",
+        "A_baumannii":
+            "species-acinetobacterbaumannii-classifier.json",
+        "E_coli":
+            "species-escherichiacoli-classifier.json",
+        "K_pneumoniae":
+            "species-klebsiellapneumoniae-classifier.json",
+        "P_aeruginosa":
+            "species-pseudomonasaeruginosa-classifier.json",
+        "S_aureus":            "species-staphylococcusaureus-classifier.json",
+    }
+
+    def __init__(self, omegamp_dir):
+        model_dir = Path(omegamp_dir) / "models"
+
+        self.models = {
+            name: AMPClassifier(
+                model_path=str(model_dir / filename)
+            ).eval()
+            for name, filename in self.MODEL_FILES.items()
+        }
+
+    def predict(self, sequences):
+
+        sequences = list(sequences)
+        features = AMPClassifier(model_path=None).get_input_features(sequences)
+
+        scores = {}
+
+        for name, model in self.models.items():
+            scores[f"omegamp_{name}_prob"] = (
+                model.predict_from_features(
+                    features,
+                    proba=True
+                )
+            )
+
+        return scores
+    
 class APEXEnsemble:
     def __init__(self, config, device):
         # Load the 8 pretrained APEX-pathogen models (relative to this file, not the cwd).
@@ -103,20 +150,16 @@ class PeptideChecks:
     
 
 class BigLibraryMetrics:
-    def __init__(self, config: SequenceConfig, device: torch.device = None):
+    def __init__(self, config: SequenceConfig, device: torch.device = None, evaluator = None):
         self.config = config
         self.device = torch.device("cpu") if device is None else device
-        self.apex_ensemble = APEXEnsemble(config, device)
+        self.evaluator = evaluator
         self.peptide_checks = PeptideChecks(config)
     
-    def calculate_metrics_big_library(self, config, path_to_generated_peptides, path_to_training_amps, path_to_reference_sequences):
+    def calculate_metrics_big_library(self, config, path_to_generated_peptides):
 
         """
-            3 main files are needed: 
-                1. Path to generated peptides by SILO
-                2. Path to training data (GRAMPA + AMPDiffusion dataset)
-                3. Path to reference data (antibacterial.fasta)
-
+            Calculate sequence based metrics (Uniqueness, Diversity), MIC calculation, AMP probability from OmegAMP, and synthesizability related properties
         """
 
         print("------")
@@ -124,117 +167,14 @@ class BigLibraryMetrics:
         print("------")
 
         generated_peptides = read_fasta_return_sequence_list(path_to_generated_peptides)
-        
-        assert len(generated_peptides) == config.total_peptide_count
+        lengths = [len(seq[1]) for seq in generated_peptides]
+        generated_peptides_with_lengths = []
+        for length, seq in zip(lengths, generated_peptides):
+            generated_peptides_with_lengths.append((seq[0], seq[1], length))
 
-        generated_df = pd.DataFrame(generated_peptides, columns=["id", "sequence"])
+        assert len(generated_peptides_with_lengths) == config.total_peptide_count
 
-        full_data_analyis = {}
-
-        generated_peptides_list = [seq[1] for seq in generated_peptides]
-
-        # 1. Sequence based metrics 
-        uniquenss_metric = Uniqueness()
-        uniqueness_ratio = uniquenss_metric(generated_peptides_list) #uniqueness amongst generated peptides 
-        full_data_analyis["Uniqueness"] = uniqueness_ratio
-
-        diversity_metric = Diversity(k= 10, seed=config.seed)
-        diversity = diversity_metric(generated_peptides_list) #Diversity of all generated peptides against a small subset of generated peptides
-        full_data_analyis["Diversity"] = diversity
-
-
-        #3. MIC calculation
-        apex_pathogen_scores = self.apex_ensemble.calculate_mic_scores(generated_peptides_list)
-        apex_mean_scores = np.mean(apex_pathogen_scores, axis=1)
-
-        apex_df = pd.DataFrame({"id": generated_df["id"].values, "apex_mean_mic": apex_mean_scores, 
-                                "A_baumannii": apex_pathogen_scores[:, 0], "E_coli_11775": apex_pathogen_scores[:, 1], 
-                                "E_coli_AIC221": apex_pathogen_scores[:, 2], "E_coli_AIC222": apex_pathogen_scores[:, 3],
-                                "K_pneumoniae": apex_pathogen_scores[:, 4], "P_aeruginosa_PAO1": apex_pathogen_scores[:, 5],
-                                "P_aeruginosa_PA14": apex_pathogen_scores[:, 6], "S_aureus": apex_pathogen_scores[:, 7],
-                                "MRSA": apex_pathogen_scores[:, 8], "VRE_faecalis": apex_pathogen_scores[:, 9], "VRE_faecium": apex_pathogen_scores[:, 10],
-                                "apex_mic50": self.apex_metrics("apex_mic50", apex_pathogen_scores), "apex_mic90": self.apex_metrics("apex_mic90", apex_pathogen_scores), "apex_gram_positive_mean": self.apex_metrics("apex_gram_positive_mean", apex_pathogen_scores), 
-                                "apex_gram_negative_mean": self.apex_metrics("apex_gram_negative_mean", apex_pathogen_scores), "gram_negative_selectivity": self.apex_metrics("gram_negative_selectivity", apex_pathogen_scores),  
-                                "gram_positive_selectivity": self.apex_metrics("gram_positive_selectivity", apex_pathogen_scores)
-                                })
-        
-
-        generated_peptides_list = [peptide for _, peptide in sorted(zip(apex_mean_scores, generated_peptides_list), key=lambda x: x[0])]
-        generated_peptides = [peptide for _, peptide in sorted(zip(apex_mean_scores, generated_peptides), key=lambda x: x[0])]
-        
-    
-        # Calculate novelty metrics 
-        # -- Use Levenshtein ratio for antibacterial peptide set (< 0.8 cut off) 
-        # -- Use Normalized Smith-Waterman local-alignment similarity against known AMP (training dataset) (0.6 cutoff) 
-
-        novelty_scores = []
-        print("------")
-        print("Novelty score calculation using local similarity and Levenshtein ratio")
-        print("------")
-        training_ref_amps = read_fasta_return_sequence_list(config.training_repre_seq_fasta)
-        antibacterial_ref_amps = read_fasta_return_sequence_list(config.antibacterial_repre_seq_fasta)
-
-        for seq in generated_peptides:
-            novelty_results = novelty_against_reference(seq, training_ref_amps, antibacterial_ref_amps)
-            novelty_scores.append({
-                "id": novelty_results["id"],
-                "training_data_novelty": novelty_results["training_data_novelty"], 
-                "max_train_reference_similarity": novelty_results["max_train_reference_similarity"], 
-                "passes_local_similarity_check": novelty_results["passes_local_similarity_check"], 
-                "closest_train_id": novelty_results["closest_train_reference_id"],
-            "closest_train_seq": novelty_results["closest_train_reference_sequence"],
-            "levenshtein_novelty": novelty_results["ab_data_novelty"],
-            "levenshtein_similarity":  novelty_results["max_ab_reference_similarity"],  
-            "passes_levenshtein_check": novelty_results["passes_ab_novelty"],             
-            "closest_ab_id":novelty_results["closest_ab_reference_id"],
-            "closest_ab_seq":novelty_results["closest_ab_reference_sequence"]}
-            )
-        
-        novelty_df = pd.DataFrame(novelty_scores)
-
-        # MMSeq2 similarity of generated sequences against Marlys database 
-        print("------")
-        print("MMseqs cluster analysis against MarLys database")
-        print("------")
-
-        marlys_results = mmseqs_marlys_similarity(config=config, query_fasta=path_to_generated_peptides, marlys_fasta=config.marlys_fasta)
-        cluster_results, global_clustering_results = calculate_clustering_coverage(config=config, query_fasta= path_to_generated_peptides, reference_fasta=path_to_training_amps)
-        full_data_analyis["clustering"] = global_clustering_results
-
-        mmseqs_df = pd.DataFrame.from_dict(marlys_results, orient="index").reset_index(drop=True)
-        clustering_df = pd.DataFrame.from_dict(cluster_results, orient="index").reset_index(drop=True)
-
-        # 2. Property distribution
-        physchem_properites = calculate_physchem_prop(generated_peptides_list)
-        property_df = pd.DataFrame({"id": generated_df["id"].values, "hydrophobicity": physchem_properites["hydrophobicity"], 
-                            "hydrophobic_moment": physchem_properites["hydrophobic_moment"], "charge": physchem_properites["charge"],
-                            "isoelectric_point": physchem_properites["isoelectric_point"]
-                            })
-
-        generated_df = (generated_df.merge(novelty_df, on="id", how="left", validate="one_to_one").merge(apex_df, on="id", how="left", validate="one_to_one").merge(mmseqs_df, on="id", how="left", validate="one_to_one").merge(clustering_df, on="id", how="left", validate="one_to_one").merge(property_df, on="id", how="left", validate="one_to_one"))
-        #generated_df.to_csv(f"{config.results_path}/per_peptide_metrics.csv", index=False)
-
-        return generated_df, full_data_analyis
-    
-    '''def calculate_metrics_big_library(self, config, path_to_generated_peptides):
-
-        """
-            3 main files are needed: 
-                1. Path to generated peptides by SILO
-                2. Path to training data (GRAMPA + AMPDiffusion dataset)
-                3. Path to reference data (antibacterial.fasta)
-
-        """
-
-        print("------")
-        print("Running evaluation metrics on generated peptide library. This may take a while :/")
-        print("------")
-
-        generated_peptides = read_fasta_return_sequence_list(path_to_generated_peptides)
-        
-        assert len(generated_peptides) == config.total_peptide_count
-
-        generated_df = pd.DataFrame(generated_peptides, columns=["id", "sequence"])
+        generated_df = pd.DataFrame(generated_peptides_with_lengths, columns=["id", "sequence", "length"])
 
         full_data_analyis = {}
 
@@ -250,8 +190,8 @@ class BigLibraryMetrics:
         full_data_analyis["Diversity"] = diversity
 
 
-        #3. MIC calculation
-        apex_pathogen_scores = self.apex_ensemble.calculate_mic_scores(generated_peptides_list)
+        #2. MIC calculation
+        apex_pathogen_scores = self.evaluator.apex_ensemble.calculate_mic_scores(generated_peptides_list)
         apex_mean_scores = np.mean(apex_pathogen_scores, axis=1)
 
         apex_df = pd.DataFrame({"id": generated_df["id"].values, "apex_mean_mic": apex_mean_scores, 
@@ -262,24 +202,34 @@ class BigLibraryMetrics:
                                 "MRSA": apex_pathogen_scores[:, 8], "VRE_faecalis": apex_pathogen_scores[:, 9], "VRE_faecium": apex_pathogen_scores[:, 10],
                                 "apex_mic50": self.apex_metrics("apex_mic50", apex_pathogen_scores), "apex_mic90": self.apex_metrics("apex_mic90", apex_pathogen_scores), "apex_gram_positive_mean": self.apex_metrics("apex_gram_positive_mean", apex_pathogen_scores), 
                                 "apex_gram_negative_mean": self.apex_metrics("apex_gram_negative_mean", apex_pathogen_scores), "gram_negative_selectivity": self.apex_metrics("gram_negative_selectivity", apex_pathogen_scores),  
-                                "gram_positive_selectivity": self.apex_metrics("gram_positive_selectivity", apex_pathogen_scores)
+                                "gram_positive_selectivity": self.apex_metrics("gram_positive_selectivity", apex_pathogen_scores), "apex_GP_mic50": self.apex_metrics("apex_GP_mic50", apex_pathogen_scores), "apex_GP_mic90": self.apex_metrics("apex_GP_mic90", apex_pathogen_scores),
+                                "apex_GN_mic50": self.apex_metrics("apex_GN_mic50", apex_pathogen_scores), "apex_GN_mic90": self.apex_metrics("apex_GN_mic90", apex_pathogen_scores), 
+                                "apex_mdr_mean": self.apex_metrics("apex_mdr_mean", apex_pathogen_scores), "apex_mdr_mic50": self.apex_metrics("apex_mdr_mic50", apex_pathogen_scores), 
+                                "apex_mdr_mic90": self.apex_metrics("apex_mdr_mic90", apex_pathogen_scores), 
                                 })
         
 
-        generated_peptides_list = [peptide for _, peptide in sorted(zip(apex_mean_scores, generated_peptides_list), key=lambda x: x[0])]
-        generated_peptides = [peptide for _, peptide in sorted(zip(apex_mean_scores, generated_peptides), key=lambda x: x[0])]
-        
-    
-        # 2. Property distribution
+        omegamp_prob_scores =  self.evaluator.OmegAMPScorer.predict(generated_peptides_list)
+        omegaamp_df = pd.DataFrame({"id": generated_df["id"].values, "omegAMP_scores":omegamp_prob_scores['omegamp_amp_prob']})
+
+        #3. Property distribution
         physchem_properites = calculate_physchem_prop(generated_peptides_list)
         property_df = pd.DataFrame({"id": generated_df["id"].values, "hydrophobicity": physchem_properites["hydrophobicity"], 
                             "hydrophobic_moment": physchem_properites["hydrophobic_moment"], "charge": physchem_properites["charge"],
                             "isoelectric_point": physchem_properites["isoelectric_point"]
                             })
+        
+        #4. Marlys MMSeq2 check 
+        print("------")
+        print("MMseqs cluster analysis against MarLys database")
+        print("------")
+        marlys_results = mmseqs_marlys_similarity(config=config, query_fasta=path_to_generated_peptides, marlys_fasta=config.marlys_fasta)
+        mmseqs_df = pd.DataFrame.from_dict(marlys_results, orient="index").reset_index(drop=True)
+        generated_df = (generated_df.merge(apex_df, on="id", how="left", validate="one_to_one").merge(omegaamp_df, on="id", how="left", validate="one_to_one").merge(mmseqs_df, on="id", how="left", validate="one_to_one").merge(property_df, on="id", how="left", validate="one_to_one"))
 
-        generated_df = (generated_df.merge(apex_df, on="id", how="left", validate="one_to_one").merge(property_df, on="id", how="left", validate="one_to_one"))
+        #generated_df.to_csv('/home/akhanna/AMP/SILO_amp_new/results/FT_3_1_GP_with_mdr/42/hydramAMP.csv')
 
-        return generated_df, full_data_analyis'''
+        return generated_df, full_data_analyis
     
     def calculate_distributional_properties(self, config, path_to_top_peptides, path_to_training_amps, path_to_top_100_embeds_pickle, path_to_known_amp_embeds_pickle,
                         full_data_analyis):
@@ -300,7 +250,6 @@ class BigLibraryMetrics:
 
         full_data_analyis["conformity_score_charge"] = charge_conformity_score
 
-        # Synthesizability (charge: 2-10, length: 8–50, hydrophobicity: −0.5 to 0.8, amphipathicity (0.2-0.6))
         amphiphilicity_conformity = ConformityScore(reference=training_amp_list, predictors=[calculate_hydrophobicmoment])
         amphiphilicities_results = amphiphilicity_conformity(generated_peptides_list)
         amphiphilicities_conformity_score = amphiphilicities_results.value
@@ -333,6 +282,7 @@ class BigLibraryMetrics:
         
         gram_neg_scores = scores[:, 0:6]
         gram_pos_scores = scores[:, 7:11]
+        gram_mdr_scores = gram_mdr_scores = scores[:, [3, 8, 9, 10]] # rows corresponding to MDR strains
 
         if metrics == 'apex_mic50':
             return np.median(scores, axis=1)
@@ -340,8 +290,23 @@ class BigLibraryMetrics:
             return np.quantile(scores,0.90,axis=1,method="higher")
         if metrics == 'apex_gram_positive_mean':
             return np.mean(gram_pos_scores, axis=1)
+        if metrics == 'apex_GP_mic50':
+            return np.median(gram_pos_scores, axis=1)
+        if metrics == 'apex_GP_mic90':
+            return np.quantile(gram_pos_scores,0.90,axis=1,method="higher")
         if metrics == 'apex_gram_negative_mean':
             return np.mean(gram_neg_scores, axis=1)
+        if metrics == 'apex_GN_mic50':
+            return np.median(gram_neg_scores, axis=1)
+        if metrics == 'apex_GN_mic90':
+            return np.quantile(gram_neg_scores,0.90,axis=1,method="higher")
+        if metrics == 'apex_mdr_mean':
+            return np.mean(gram_mdr_scores, axis=1)
+        if metrics == 'apex_mdr_mic50':
+            return np.median(gram_mdr_scores, axis=1)
+        if metrics == 'apex_mdr_mic90':
+            return np.quantile(gram_mdr_scores,0.90,axis=1,method="higher")
+
         
         if metrics == 'gram_positive_selectivity' or metrics == 'gram_negative_selectivity':
 
@@ -450,28 +415,28 @@ def check_amp_synthesizability(
     sequence: str,
     charge_range: tuple[float, float] = (2.0, 10.0),
     hydrophobicity_range: tuple[float, float] = (-0.5, 0.8),
-    hydrophobic_moment_cutoff: float = (0.2, 0.7),
+    hydrophobic_moment_cutoff: float = (0.3, 0.6),
     max_cysteines: int = 1,
 ) -> dict:
     
     """
     Apply physicochemical/developability filters to an AMP candidate.
 
-    Returns True if all filters are passed 
-
-    # Taken from OmegaAMP https://arxiv.org/html/2504.17247
+        Returns True if all filters are passed 
 
     """
 
 
     # Synthesizability criteria:
-    # Charge (2-10) # AMPs need net positive charge at pH 7.4: +2 to +9 is the validated AMP activity range (APD3 database)
+    # Net charge (2-10) # AMPs need net positive charge at pH 7.4: 
     # Hydrophobicity (-0.5-0.8)
-    # amphipathicity: Hydrophobic moment HM (0.2-0.6): distinct hydrophilic face keeps the peptide solvated post-synthesis and predicts good AMP activity.
+    # amphipathicity: Hydrophobic moment HM (0.3-0.6)
     # Not more than 3 consecutive hydrophobic residues 
     # Not more than 1 Cys disulfide scrambling during/after SPPS
+    # No run of more than 2 consecutive glycines
+    # Proline content is not more than 20% of residues
 
-    # Taken from OmegaAMP https://arxiv.org/html/2504.17247
+    # Taken from OmegaAMP https://arxiv.org/html/2504.17247 and https://www.biorxiv.org/content/10.64898/2026.09.01.747572v1.full.pdf
 
 
     hydrophobic_mom = calculate_hydrophobicmoment([sequence])
@@ -488,18 +453,23 @@ def check_amp_synthesizability(
     if not hydrophobic_moment_cutoff[0] <= hydrophobic_mom <= hydrophobic_moment_cutoff[1]:
         return False
     
+    if sequence.count("P") / len(sequence) > 0.20:
+        return False
+    
     if not check_sequence_for_hydrophobic_clusters(sequence):
         return False
+    
+    if "GGG" in sequence:
+        return False
 
-    if n_cys > max_cysteines:
+    if n_cys > max_cysteines + 1:
         return False
     
     return True
 
-def check_sequence_for_hydrophobic_clusters(sequence: str, max_run: int = 4) -> bool:
+def check_sequence_for_hydrophobic_clusters(sequence: str, max_run: int = 3) -> bool:
 
-    # filter out of three hydrophobic residues consecutively
-    #Not more than 3 consequetive hydrobic AA
+    # Filter out of three hydrophobic residues consecutively
     
     HYDROPHOBIC_AA = set("FILVWMA")
     run = 0
@@ -508,7 +478,7 @@ def check_sequence_for_hydrophobic_clusters(sequence: str, max_run: int = 4) -> 
         if aa in HYDROPHOBIC_AA:
             run += 1
 
-            if run > max_run:
+            if run >= max_run + 1:
                 return False
         else:
             run = 0
@@ -552,5 +522,5 @@ def candidate_selection_for_SILO_training(trajectories,
         if peptide not in seen_protein_smiles:
             new_unique.append(traj)
 
-    final_trajs = sorted(new_unique, key=lambda x: x['objective'], reverse=config.max_objective)
+    final_trajs = sorted(new_unique, key=lambda x: x['objective'])
     return final_trajs
