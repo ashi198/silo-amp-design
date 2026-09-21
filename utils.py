@@ -55,6 +55,7 @@ def save_all_peptides_pickle_file(config, sequences, path_to_pickle_file):
             merged_seqs = list(temp_d.values())
         else:
             merged_seqs = sorted(merged_seqs, key=lambda x: x["objective"], reverse=config.max_objective)
+        
         # Pickle the generated data again
         with open(destination_path, "wb") as f:
             pickle.dump(merged_seqs, f)
@@ -87,16 +88,13 @@ def save_pickle_file_for_training(config, sequences, path_to_pickle_file):
 
     merged_seqs = sequences
 
-    temp_d = {x["peptide"]: x for x in merged_seqs}
-
     if destination_path is not None:
         if os.path.isfile(destination_path):
             with open(destination_path, "rb") as f:
                 existing_seqs = pickle.load(f)  # list of dicts
             temp_d = {x["peptide"]: x for x in existing_seqs + merged_seqs}
             merged_seqs = list(temp_d.values())
-            merged_seqs = sorted(merged_seqs, key=lambda x: x["objective"], reverse=config.max_objective)[
-                                :config.self_improvement_learning['num_trajectories_to_keep']]
+            merged_seqs = sorted(merged_seqs, key=lambda x: x["objective"], reverse=config.max_objective)[:config.self_improvement_learning['num_trajectories_to_keep']]
         else:
             merged_seqs = sorted(merged_seqs, key=lambda x: x["objective"], reverse=config.max_objective)[
                                 :config.self_improvement_learning['num_trajectories_to_keep']]
@@ -109,7 +107,7 @@ def save_pickle_file_for_training(config, sequences, path_to_pickle_file):
     metrics_return["mean_kept_obj"] = np.array([x["objective"]for x in all_generated_seqs]).mean()
     metrics_return["top_20_sequences"] = [{x["identifier"]: x["objective"]for x in all_generated_seqs[:20]}]
 
-    return metrics_return 
+    return metrics_return, merged_seqs 
 
 
 
@@ -123,34 +121,6 @@ def train_for_one_cycle(epoch: int, config: SequenceConfig, network: SequenceTra
         Overview:
             Each round consists of (1) sampling candidate sequences using the current policy and (2) updating the policy using high-quality trajectories selected via
             oracle feedback.
-
-        Full explaination:
-            1. Sampling:
-                - Use the current policy (via its logits) together with Stochastic Beam Search (SBS) using the 'SequenceFitnessDataset'
-                to sample action trajectories.
-                - Each trajectory corresponds to a sequence of edit actions that produce a mutant sequence.
-
-            2. Scoring with trained surrogate model:
-                - Evaluate sampled sequences using a trained proxy.
-                - Compute:
-                    (a) UCB-based surrogate fitness 
-                    (b) Alanine scan score
-                - Combine these scores into a single objective used for ranking candidates.
-
-            3. Candidate selection and oracle evaluation:
-                - Greedily select the top-K sequences (e.g., 128) according to the combined objective.
-                - Query the oracle to obtain ground-truth fitness values for these sequences.
-
-            4. Trajectory selection for policy training:
-                - From the oracle-evaluated set, select the top `num_trajectories_to_keep`
-                sequences based on true objective values.
-                - These define the high-quality trajectories used as supervision.
-
-            5. Policy update:
-                - Convert selected trajectories into (state, action) training pairs using
-                the `PolicyTrainingDataset`.
-                - Train the policy via next-token prediction (behavior cloning) using a
-                cross-entropy loss over actions.
     
     """
 
@@ -164,14 +134,13 @@ def train_for_one_cycle(epoch: int, config: SequenceConfig, network: SequenceTra
     passed_masked = objective_evaluator.peptide_checks.basic_validity_mask(candidates, seen_protein_smiles)
     passed_sequences = [seq for seq, passed in zip(candidates, passed_masked) if passed]
     final_candidates = objective_evaluator.peptide_checks.synthesis_based_masking(passed_sequences)
-
-    for cand in final_candidates:
-        seen_protein_smiles.append(cand['peptide'])
     
     # Save sequences in csv file and pickle file 
-    logger.save_results_csv(config= config, trajectories = final_candidates, path_csv_file=os.path.join(config.results_path, f"generated_peptides.csv"))
-    save_all_peptides_pickle_file(config, final_candidates, os.path.join(config.results_path, f"global_peptide.pickle"))
-    metrics = save_pickle_file_for_training(config, final_candidates, os.path.join(config.results_path, f"peptides_for_training.pickle"))
+    logger.save_results_csv(config= config, trajectories = final_candidates, path_csv_file=os.path.join(config.results_path, f"generated_peptides.csv"))    
+    save_all_peptides_pickle_file(config, final_candidates, os.path.join(config.results_path, f"global_peptide.pickle"))    
+    metrics, picked_candidates = save_pickle_file_for_training(config, final_candidates, os.path.join(config.results_path, f"peptides_for_training.pickle"))
+    for cand in picked_candidates:
+        seen_protein_smiles.append(cand['peptide'])
 
     
     if len(metrics) > 0:
@@ -179,7 +148,6 @@ def train_for_one_cycle(epoch: int, config: SequenceConfig, network: SequenceTra
         print("Generated Sequences")
         print(f"Mean obj. over fresh best seqs: {metrics['mean_gen_obj']:.3f}")
         print(f"Best / worst obj. over fresh best seqs: {metrics['best_gen_obj']:.3f}, {metrics['worst_gen_obj']:.3f}")
-        print(f"All time best sequence: {list(metrics['top_20_sequences'][0].values())[0]:.3f}")
 
         torch.cuda.empty_cache()
         time.sleep(1)
@@ -302,7 +270,6 @@ def inference(epoch: int, config: SequenceConfig, network_weights: dict, logger=
             # do basic and synthesis related checks 
             passed_masked = evalutor.peptide_checks.basic_validity_mask(initial_candidates, seen_protein_smiles)
             passed_sequences = [seq for seq, passed in zip(initial_candidates, passed_masked) if passed]    
-            #passed_sequences = evalutor.peptide_checks.synthesis_based_masking(passed_sequences)
 
             for cand in passed_sequences:
                 seen_protein_smiles.append(cand['peptide'])
@@ -454,12 +421,12 @@ def candidate_records_from_metrics(rows: Iterable[Mapping[str, Any]]) -> list[di
             "id": identifier,
             "sequence": sequence,
             "mean_predicted_mic": row["apex_mean_mic"],
-            "marlys_identity_pass": _as_bool(row.get("passes_marlys_80")),
             "charge": row.get("charge"),
             "hydrophobicity": row.get("hydrophobicity"),
             "cysteine_count": sequence.count("C"),
-            "passes_levenshtein_check": row["passes_levenshtein_check"],
+            "proline_per": sequence.count("P") / len(sequence),
             "max_hydrophobic_run": _max_hydrophobic_run(sequence),
-            "amphipathicity": row.get("hydrophobic_moment")
+            "marlys_identity_pass": _as_bool(row.get("passes_marlys_80")),
+            "amphipathicity": row.get("hydrophobic_moment"),
         })
     return records
