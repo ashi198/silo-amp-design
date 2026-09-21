@@ -108,6 +108,7 @@ class Logger:
                 "sequence": "".join(seq["seq_list"]),
                 "length": seq["length"],
                 "mic_mean_score": seq["apex_mean_score"],
+                "omega_amp": seq["omegaAMP_prob"]
             }
 
             # Add every APEX score as its own column
