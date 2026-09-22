@@ -1,41 +1,38 @@
 # SILO for AMP: Self-Improvement imitation Learning for Antimicrobial Peptide Design
 
-This repository contains the implementation of SILO (Self-Improvement imitation Learning for protein Optimization) for de novo antimicrobial peptide (AMP) sequence design. SILO trains and/or loads a sequence policy, uses incremental stochastic beam search to generate candidate peptides, evaluates a large candidate library with APEX pathogen MIC prediction model and physicochemical checks, and selects a diverse, novel top-`K` submission. The competition inference entry point is [`inference.sh`](inference.sh).
+This repository is the official submission for AMP Challenge 2027 (https://github.com/szczurek-lab/amp-challenge-2027.git). The repo contains implementation of SILO (Self-Improvement imitation Learning for protein Optimization) for de novo antimicrobial peptide (AMP) sequence design. SILO trains and/or loads a sequence policy, uses incremental stochastic beam search to generate candidate peptides, evaluates a large candidate library with APEX pathogen MIC prediction model and physicochemical checks, and selects a diverse, novel top-`K` submission. The competition inference entry point is [`run_uv_generate.sh`](run_uv_generate.sh).
 
 The method is described in:
 
 > [Self-Improvement Imitation with Biologically Guided Search for Protein Design Under Oracle Budgets](https://arxiv.org/abs/2605.26690)
 
-## What the organizers should run
+## TLDR: What the organizers should run
 
 From the repository root:
 
 ```bash
-chmod +x inference.sh
-./inference.sh
+chmod +x run_uv_generate.sh
+./run_uv_generate.sh.
 ```
 
-The script invokes `inference.py` with a seed of `42`, a CUDA device of `cuda:0`, a 50,000-sequence generation budget, and a final top-100 selection.
-
-Before running the script, the competition checkpoint must be placed at:
+The script invokes `./SILO_amp/generate.py` with a seed of `42`, a CUDA device of `cuda:0`, a 50,000-sequence generation budget, and a final top-100 selection. Before running the script, the competition checkpoint must be placed at:
 
 ```text
-./results/FT_3_encoder_with_OMA_only_pickle/42/best_model.pt
+./inference/
 ```
 
 The checkpoint is not included in this source checkout because of its size. The inference runtime expects a PyTorch checkpoint containing the `model_weights` and `optimizer_state` entries used by the training code.
 
 ## End-to-end inference pipeline
 
-`inference.py` performs the following operations:
+`generate.py` performs the following operations:
 
 1. Loads `best_model.pt` and reconstructs the `SequenceTransformer` policy.
-2. Enables deterministic beam-search decoding and seeds Python, NumPy, and PyTorch randomness with `42` by default.
+2. Enables reproducible stochastic beam-search decoding and seeds Python, NumPy, and PyTorch randomness with `42` by default.
 3. Generates exactly 50,000 unique candidate peptide sequences with lengths from 8 to 50 residues.
-4. Removes invalid, duplicated, known, or otherwise disallowed sequences.
-5. Scores the generated library with the APEX pathogen MIC prediction ensemble model and the OmegAMP AMP classifier/scorer.
-6. Computes sequence properties including charge, hydrophobicity, hydrophobic moment, cysteine count, and hydrophobic runs.
-reject a candidate if an actual local alignment has pident > 80% and covers at least 80%
+4. Removes invalid, duplicated, known, or otherwise disallowed sequences, as well as any identical sequences present in ./SILO_amp/data/antibacterial.fasta, ./SILO_amp/data/marlys.fasta, and ./SILO_amp/data/training.fasta.
+5. Scores the generated library with the APEX pathogen MIC prediction ensemble model.
+6. Computes physiochemical properties including charge, hydrophobicity, hydrophobic moment, hydrophobic runs using and cysteine and proline count, and sequence identity to sequence within the marlys.fasta file using MMSeq tool. 
 of that generated candidate.
 7. Applies novelty, synthesizability, physicochemical, activity, and diversity criteria.
 8. Selects a diverse top-100 set across overall, Gram-positive-selective, Gram-negative-selective, and broad-spectrum candidate pools.
@@ -61,8 +58,7 @@ The runtime fails explicitly if it cannot produce exactly the requested number o
 
 ## Environment and installation
 
-The reference environment uses Linux, Python 3.10, an NVIDIA GPU, CUDA 12.8-compatible PyTorch wheels, and Ray for parallel evaluation. The original development configuration was tested on an NVIDIA A40 with CUDA 12.2; the pinned PyTorch build is `2.8.0+cu128`.
-
+The original development configuration was tested on an NVIDIA A40 with CUDA 12.2; the pinned PyTorch build is `2.8.0+cu128`.
 Create an environment and install the dependencies:
 
 ```bash
@@ -71,23 +67,22 @@ conda activate silo
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
-
 `requirements.txt` includes the CUDA-enabled PyTorch build, Ray, Biopython, APEX-related scientific Python packages, and packages used for metric calculation and logging.
 
 ## Required models and data
 
-The repository includes the reference FASTA files and supporting data used by the inference pipeline:
+The repository includes the reference fasta files and supporting data used by the inference pipeline:
 
 ```text
-objectives/reference_data/antibacterial.fasta
-objectives/reference_data/marlys.fasta
-objectives/reference_data/training.fasta
-training/training_data/final_SILO_training_dataset.fasta
+./SILO_amp/data/antibacterial.fasta
+./SILO_amp/data/marlys.fasta
+./SILO_amp/data/training.fasta
+
 ```
 
 The APEX model assets are expected under `apex/`, and the OmegAMP implementation and its model/data assets are organized under `OmegAMP/`. Any model weights or large assets supplied separately by the competition must preserve the paths expected by the code or be copied into the corresponding project directories.
 
-The current `config.py` contains an absolute development-machine checkpoint path retained for the training workflow. The supplied inference entry point overrides the checkpoint from its `--checkpoint` argument, but the repository should still be run from its root so all relative data and model paths resolve correctly. If the repository is moved to another location, update any remaining absolute path in `sequence_evaluator.py` and use a checkpoint path appropriate to the new checkout.
+The current `config.py` contains an absolute development-machine checkpoint path retained for the training workflow. The supplied inference entry point overrides the checkpoint from its `--checkpoint` argument, but the repository should still be run from its root so all relative data and model paths resolve correctly. 
 
 ## Command-line interface
 
@@ -114,11 +109,9 @@ Arguments:
 | `--total-peptide-count` | `50000` | Number of generated library candidates. |
 | `--top-k` | `100` | Number of final selected candidates. Must not exceed the library size. |
 
-For a CPU smoke test or reduced local experiment, lower `--total-peptide-count` and choose a correspondingly smaller `--top-k`. The competition contract, however, is the 50,000-candidate library and 100-candidate submission configured in `inference.sh`.
-
 ## Training and pretraining entry points
 
-The main training entry point is [`main.py`](main.py):
+The main training/finetuning entry point is [`./SILO_amp/main.py`](main.py):
 
 ```bash
 python main.py \
@@ -129,48 +122,37 @@ python main.py \
   --comments experiment
 ```
 
-Training performs repeated self-improvement cycles. Each cycle generates candidates with the current policy, evaluates them, uses selected trajectories for policy training, tracks metrics through MLflow, saves `best_model.pt` and `last_model.pt`, and finally runs inference with the trained policy.
+Training performs repeated self-improvement cycles. Each cycle generates candidates with the current policy, evaluates them, uses top trajectories for policy training, tracks metrics, saves `best_model.pt` and `last_model.pt`, and finally runs inference with the trained policy.
 
-The optional pretraining utilities are in [`pretrain/`](pretrain/). The pretraining dataset files are already present in that directory; [`pretrain/pretrain.py`](pretrain/pretrain.py) contains the pretraining loop. These workflows are not required when the organizers are supplied with the competition checkpoint.
+The optional pretraining utilities are in [`./SILO_amp/pretrain/`]. The pretraining dataset files are already present in that directory; [`./SILO_amp/pretrain/pretrain.py`] contains the loop to first pretrain the policy on a larger dataset of AMPs before the finetuning. These workflows are not required when the organizers are supplied with the competition checkpoint.
 
-## Repository layout
+## Repository layout of SILO_amp
 
 ```text
-inference.sh                 Competition inference launcher
-inference.py                 Inference-only entry point and artifact writer
+run_uv_generate.sh           Competition inference launcher
+generate.py                  Inference-only entry point and artifact writer
 main.py                      Training/fine-tuning entry point
 config.py                    Model, search, data, and optimization configuration
-model/                       Transformer policy and multi-head attention modules
-core/                        Sequence generation and incremental beam-search runtime
+model/                       Directory with files for transformer policy model
+core/                        Directory with files for sequence generation and incremental beam-search runtime
 sequence_design.py           Sequence/action representation used by the policy
 sequence_dataset.py          Policy-training dataset utilities
 sequence_evaluator.py        APEX/OmegAMP evaluation and candidate-selection policy
-evaluation_metrics/          Activity, novelty, physicochemical, and diversity metrics
+evaluation_metrics/          Directory with files for activity, novelty, physicochemical, and diversity metrics
 apex/                        APEX antibacterial activity models and scoring helpers
 OmegAMP/                     OmegAMP scoring implementation and supporting assets
 pretrain/                    Pretraining data preparation and training utilities
 training/training_data/      SILO training and validation FASTA/data files
-objectives/reference_data/   Reference sequences used for filtering and novelty checks
+data/                        Directory with fasta files for filtering and novelty checks
 requirements.txt             Python dependencies
 ```
 
-## Reproducibility notes
-
-- Run commands from the repository root.
-- Use the same checkpoint, seed, device configuration, and reference data when comparing runs.
-- The inference path forces deterministic search, but GPU kernels and third-party numerical libraries can still introduce small platform-dependent differences.
-- Ray is initialized by the inference runtime and shut down when the run completes.
-- A successful `manifest.json` is the recommended handoff record because it contains artifact counts and SHA-256 checksums.
 
 ## Citation and acknowledgements
-
 If you use SILO for AMP, please cite the SILO paper linked above. This repository also builds on or incorporates ideas and implementations from:
 
+- [SILO](https://github.com/grimmlab/SILO.git) for the base implementation of SILO for de-novo peptide generation.
 - [Gumbeldore](https://github.com/grimmlab/gumbeldore), for incremental stochastic beam search and candidate generation.
-- [ProSpero](https://github.com/szczurek-lab/ProSpero), for protein fitness benchmark data and oracle-related components.
 - [Stochastic Beam Search](https://github.com/wouterkool/stochastic-beam-search/tree/stochastic-beam-search), for search methodology and reference implementations.
-- [OmegAMP](https://openreview.net/forum?id=hAq3XLZ9ex), for AMP generation/classification components used by the scoring pipeline.
-
-## License
-
-No repository-level license file is currently present. Please follow the competition’s submission and redistribution terms, and add the applicable license before public redistribution if required.
+- [APEX Pathogen model](git@gitlab.com:machine-biology-group-public/apex-pathogen.git) MIC prediction model and the main objective function to optimize within SILO. 
+- [OmegAMP](https://openreview.net/forum?id=hAq3XLZ9ex), for AMP scoring.
