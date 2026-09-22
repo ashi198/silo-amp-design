@@ -5,7 +5,6 @@ torchvision==0.23.0+cu128
 torchdata
 torchtext
 torchtune
-flash_attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp310-cp310-linux_x86_64.whl#sha256=75c51f34bb93c5a4438d6b767547ca6c22a9bfc6b29b5646dda98e943cd75d99
 numpy==1.26.4
 ray==2.50.0
 tqdm==4.67.1
