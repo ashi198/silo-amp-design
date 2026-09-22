@@ -49,11 +49,11 @@ class SequenceConfig:
         self.num_epochs = 1
         self.CUDA_VISIBLE_DEVICES = "0,1"  # Must be set, as ray can have problems detecting multiple GPUs
         self.batch_size_training = 8
-        self.training_fasta = './SILO_amp/training/training_data/final_SILO_training_dataset.fasta'
+        self.training_fasta = './SILO_amp/data/training.fasta'
         self.marlys_fasta = './SILO_amp/data/marlys.fasta'
         self.antibacterial_fasta = './SILO_amp/data/antibacterial.fasta'
         
-        self.load_checkpoint_from_path = '/home/akhanna/AMP/SILO_amp/results/pretrain/8_50_PE_valid_mask_LD_512_BL_10_head_16/42/best_model.pt'
+        self.load_checkpoint_from_path = None
         self.if_pretrain = False
         self.num_batches_per_epoch = None  # Can be None, then we just do one pass through generated dataset
 
