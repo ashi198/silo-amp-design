@@ -76,7 +76,6 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     try:
         ray.shutdown()
         if not ray.is_initialized():
-            ray.init()
             ray.init(runtime_env={
             "excludes": [
                 ".git/",
