@@ -88,7 +88,6 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
                         ".git/**",
                         "SILO_amp/OmegAMP/data/generative-model-data/**",
                         "SILO_amp/OmegAMP/data/activity-data/**",
-                        "SILO_amp/apex/APEX_pathogen_models/**",
                     ],
                 }
             )
