@@ -83,6 +83,8 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
                         "generate",
                         "generate/**",
                         ".venv/**",
+                        "generate/mmseq/marlys_hits.tsv", 
+                        "generate/mmseq/mmseqs_tmp", 
                         "SILO_amp/.venv/**",
                         "SILO_amp/OmegAMP/data/generative-model-data/**",
                         "SILO_amp/OmegAMP/data/activity-data/**",
@@ -91,7 +93,7 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
             )
             
             started_ray = True
-            
+
         print(f"Policy network is on device {config.training_device}")
         network.to(network.device)
         network.eval()
