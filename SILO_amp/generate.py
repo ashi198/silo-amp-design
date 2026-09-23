@@ -19,6 +19,7 @@ import os
 os.environ["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"
 
 import ray, torch, os, argparse, copy
+import ray._private.worker as ray_worker
 
 
 #PROJECT_ROOT = Path(__file__).resolve().parent
@@ -74,20 +75,11 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     started_ray = False
 
     try:
+        ray_worker._maybe_modify_runtime_env = (lambda runtime_env, _skip_env_hook: runtime_env or {})
         ray.shutdown()
+
         if not ray.is_initialized():
-            ray.init(
-                runtime_env={
-                    "excludes": [
-                        ".git/**",
-                        "SILO_amp/OmegAMP/data/generative-model-data/**",
-                        "SILO_amp/OmegAMP/data/activity-data/**",
-                        "SILO_amp/data/**",
-                        "SILO_amp/apex/APEX_pathogen_models/**",
-                    ],
-                }
-            )
-            
+            ray.init()
             started_ray = True
         print(f"Policy network is on device {config.training_device}")
         network.to(network.device)
