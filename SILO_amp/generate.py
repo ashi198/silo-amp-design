@@ -82,7 +82,17 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
         if not ray.is_initialized():
             print("generate.py is calling ray.init")
             print("Ray version:", ray.__version__)
-            ray.init()
+            ray.init(
+                runtime_env={
+                    "excludes": [
+                        ".git/**",
+                        "SILO_amp/OmegAMP/data/generative-model-data/**",
+                        "SILO_amp/OmegAMP/data/activity-data/**",
+                        "SILO_amp/data/**",
+                        "SILO_amp/apex/APEX_pathogen_models/**",
+                    ],
+                }
+            )
             started_ray = True
         print(f"Policy network is on device {config.training_device}")
         network.to(network.device)
