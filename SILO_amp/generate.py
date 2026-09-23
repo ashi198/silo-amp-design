@@ -14,14 +14,9 @@ from .utils import inference, set_seed, write_submission_artifacts, candidate_re
 from .evaluation_metrics.utils import read_fasta_return_sequence_list, BigLibraryMetrics
 from .model.transformer_architecture import SequenceTransformer
 import pandas as pd
-import os
-os.environ["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"
 import ray, torch, os, argparse, copy
 from pathlib import Path
-
-
-#PROJECT_ROOT = Path(__file__).resolve().parent
-
+import logging
 project_root = Path(__file__).resolve().parent.parent
 
 
@@ -42,6 +37,13 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
 
     checkpoint_path = args.checkpoint
     output_dir = args.output_dir
+    output_path = Path(args.output_dir)
+    if not output_path.is_absolute():
+        output_path = (project_root / output_path).resolve()
+
+    output_dir = str(output_path)
+    os.makedirs(output_dir, exist_ok=True)
+
     if not checkpoint_path:
         raise ValueError(f"checkpoint not found: {checkpoint_path}")
     if args.total_peptide_count < 1 or args.top_k < 1:
@@ -57,16 +59,10 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     config.do_inference = True
     config.self_improvement_learning["devices_for_workers"] = [args.device]
     config.self_improvement_learning["beam_width"] = 32
-    os.makedirs(output_dir, exist_ok=True)
-    ray.shutdown()
-    if not output_path.is_absolute():
-      output_path = (project_root / output_path).resolve()
 
     network = SequenceTransformer(config, config.training_device)
-
     set_seed(args.seed)
     checkpoint = torch.load(os.path.join(checkpoint_path, "best_model.pt"), weights_only=False)
-
     network.load_state_dict(checkpoint["model_weights"])
     print(f"Loading checkpoint from path {checkpoint_path} for inference")
 
@@ -85,11 +81,7 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
             "SILO_amp/OmegAMP/data/activity-data/**",
         ],}
     
-    print("Ray working directory:", runtime_env["working_dir"])
-    print("Ray excludes:")
-    for pattern in runtime_env["excludes"]:
-        print(f"  - {pattern}")
-
+    logging.getLogger("ray._private.runtime_env.packaging").setLevel(logging.ERROR)
     ray.init(runtime_env=runtime_env)
     
     print(f"Policy network is on device {config.training_device}")
@@ -107,10 +99,6 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
         config=config,
         network_weights=network_weights,
         evalutor=evaluator)
-    
-    #generated_50k_fasta_path = './results/test_better_model/generated_50k_peptides_library.fasta'
-    
-    #generated_50k_df = pd.read_csv('/home/akhanna/AMP/SILO_for_ampdesign/results/with_double_aa/42/generated_50k.csv')
 
     generated_50k_df = big_library_worker.calculate_metrics_big_library(config, generated_50k_fasta_path)
     records = candidate_records_from_metrics(generated_50k_df.to_dict("records"))
