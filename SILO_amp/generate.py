@@ -14,14 +14,9 @@ from .utils import inference, set_seed, write_submission_artifacts, candidate_re
 from .evaluation_metrics.utils import read_fasta_return_sequence_list, BigLibraryMetrics
 from .model.transformer_architecture import SequenceTransformer
 import pandas as pd
-
 import os
 os.environ["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"
-
 import ray, torch, os, argparse, copy
-import sys
-sys.stderr.write(">>> generate.py started\n")
-sys.stderr.flush()
 
 
 #PROJECT_ROOT = Path(__file__).resolve().parent
@@ -29,7 +24,7 @@ sys.stderr.flush()
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SILO for AMP design reproducible inference")
-    parser.add_argument("--checkpoint", type=Path, default='/home/akhanna/AMP/silo-amp-design/results/FT_3_1_GP_with_mdr/42')
+    parser.add_argument("--checkpoint", type=Path, default='/home/akhanna/AMP/silo-amp-design/results/FT_3_1_GP_with_mean_obj_GP_mean_1/42/')
     parser.add_argument("--output_dir", type=Path, default='./')
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda:0")
@@ -76,12 +71,8 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
 
     try:
         ray.shutdown()
-        sys.stderr.write(">>> entered generator Ray block\n")
-        sys.stderr.flush()
 
         if not ray.is_initialized():
-            print("generate.py is calling ray.init")
-            print("Ray version:", ray.__version__)
             ray.init(
                 runtime_env={
                     "excludes": [
