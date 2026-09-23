@@ -75,22 +75,21 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
 
     try:
         if not ray.is_initialized():
-            ray.init(
-                runtime_env={
-                    "working_dir": str(project_root),
-                    "excludes": [
-                        ".git/**",
-                        "generate",
-                        "generate/**",
-                        ".venv/**",
-                        "generate/mmseq/marlys_hits.tsv", 
-                        "generate/mmseq/mmseqs_tmp", 
-                        "SILO_amp/.venv/**",
-                        "SILO_amp/OmegAMP/data/generative-model-data/**",
-                        "SILO_amp/OmegAMP/data/activity-data/**",
-                    ],
-                }
-            )
+            runtime_env={
+                "working_dir": str(project_root),
+                "excludes": [
+                    ".git/**",
+                    f"{output_dir}/**",
+                    ".venv/**",
+                    "SILO_amp/.venv/**",
+                    "SILO_amp/OmegAMP/data/generative-model-data/**",
+                    "SILO_amp/OmegAMP/data/activity-data/**",
+                ],}
+            ray.init(runtime_env)
+            print("Ray working directory:", runtime_env["working_dir"])
+            print("Ray excludes:")
+            for pattern in runtime_env["excludes"]:
+                print(f"  - {pattern}")
             
             started_ray = True
 
