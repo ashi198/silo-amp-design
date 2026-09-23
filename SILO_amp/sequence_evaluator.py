@@ -282,7 +282,7 @@ def select_candidates(
     # Broad-spectrum pool:
     # Similar GP and GN MIC50 values and low overall MIC90.
     broad_pool = sorted([x for x in top_valid if (min(x["apex_GP_mic50"], x["apex_GN_mic50"]) / max(x["apex_GP_mic50"], x["apex_GN_mic50"])) >= 0.9  
-                   and x["apex_mic90"] < activity_threshold],   key=lambda x: (
+                   and x["apex_mic90"] <= activity_threshold],   key=lambda x: (
         # Most important: activity across many strains
         (x["apex_mic90"]), str(x["sequence"]),),)
     
@@ -292,8 +292,8 @@ def select_candidates(
     gp_pool = sorted(
         [
             x for x in top_valid
-            if x["apex_mic90"] < 0.8
-            and x["apex_GP_mic90"] < activity_threshold
+            if x["gram_positive_selectivity"] < 0.8
+            and x["apex_GP_mic90"] <= activity_threshold
         ],
         key=lambda x: (
             x["apex_GP_mic90"],  # descending MIC90
@@ -308,7 +308,7 @@ def select_candidates(
         [
             x for x in top_valid
             if x["gram_negative_selectivity"] < 0.5
-            and x["apex_GN_mic90"] < activity_threshold
+            and x["apex_GN_mic90"] <= activity_threshold
         ],
         key=lambda x: (
             x["apex_GN_mic90"],  # descending MIC90
@@ -319,12 +319,12 @@ def select_candidates(
 
     # MDR pool:
     # Prioritize lower MDR MIC90.
-    mdr = sorted([x for x in top_valid if (x["apex_mdr_mic90"]) < 64], 
+    mdr = sorted([x for x in top_valid if (x["apex_mdr_mic90"]) <= activity_threshold], 
                         key=lambda x: (x["apex_mdr_mic90"], str(x["sequence"]),),)
 
     # Overall activity pool:
     # Prioritize lower overall MIC90.
-    overall_pool = sorted([x for x in top_valid if x["apex_mic90"] < activity_threshold],
+    overall_pool = sorted([x for x in top_valid if x["apex_mic90"] <= activity_threshold],
     key=lambda x: (
         x["apex_mic90"],
         str(x["sequence"]),
@@ -357,7 +357,7 @@ def select_candidates(
                 x for x in top_valid
                 if str(x["sequence"]) not in existing_gp_sequences
                 and x["gram_positive_selectivity"] < 0.8
-                and x["apex_GP_mic50"] < activity_threshold
+                and x["apex_GP_mic50"] <= activity_threshold
             ],
             key=lambda x: (
                 x["apex_GP_mic50"],              # fallback: lower MIC50 is better
@@ -379,7 +379,7 @@ def select_candidates(
             [
                 x for x in top_valid
                 if str(x["sequence"]) not in existing_mdr_sequences
-                and x["apex_mdr_mean"] < activity_threshold
+                and x["apex_mdr_mean"] <= activity_threshold
             ],
             key=lambda x: (
                 x["apex_mdr_mean"],              # fallback: lower MIC50 is better
@@ -399,7 +399,7 @@ def select_candidates(
 
         bs_fallback = sorted([x for x in top_valid if (str(x["sequence"]) not in existing_broad_sequences) and 
                               (min(x["apex_GP_mic50"], x["apex_GN_mic50"]) / max(x["apex_GP_mic50"], x["apex_GN_mic50"])) >= 0.9  
-                   and x["apex_mic50"] < activity_threshold],   
+                   and x["apex_mic50"] <= activity_threshold],   
                    key=lambda x: (
         # Most important: activity across many strains
         (x["apex_mic50"]), str(x["sequence"]),),)

@@ -25,7 +25,7 @@ import ray, torch, os, argparse, copy
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SILO for AMP design reproducible inference")
     parser.add_argument("--checkpoint", type=Path, default='/home/akhanna/AMP/silo-amp-design/results/FT_3_1_GP_with_mean_obj_GP_mean_1/42/')
-    parser.add_argument("--output_dir", type=Path, default='./')
+    parser.add_argument("--output_dir", type=Path, default='./generate')
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--total-peptide-count", type=int, default=50000)
