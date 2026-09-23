@@ -21,6 +21,8 @@ import ray, torch, os, argparse, copy
 
 #PROJECT_ROOT = Path(__file__).resolve().parent
 
+project_root = Path(__file__).resolve().parent.parent
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SILO for AMP design reproducible inference")
@@ -75,6 +77,7 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
         if not ray.is_initialized():
             ray.init(
                 runtime_env={
+                    "working_dir": str(project_root),
                     "excludes": [
                         ".git/**",
                         "generate",
@@ -86,7 +89,9 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
                     ],
                 }
             )
+            
             started_ray = True
+            
         print(f"Policy network is on device {config.training_device}")
         network.to(network.device)
         network.eval()
