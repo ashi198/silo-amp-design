@@ -79,9 +79,9 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
             ray.init(runtime_env={
             "excludes": [
                 ".git/",
-                "./SILO_amp/OmegAMP/data/",
-                "./SILO_amp/data/",
-                "./SILO_amp/apex/APEX_pathogen_models/",
+                "/SILO_amp/OmegAMP/data/",
+                "/SILO_amp/data/",
+                "/SILO_amp/apex/APEX_pathogen_models/",
             ],
         })
             
