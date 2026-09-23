@@ -58,6 +58,7 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     config.self_improvement_learning["devices_for_workers"] = [args.device]
     config.self_improvement_learning["beam_width"] = 32
     os.makedirs(output_dir, exist_ok=True)
+    ray.shutdown()
     if not output_path.is_absolute():
       output_path = (project_root / output_path).resolve()
 
