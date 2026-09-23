@@ -45,6 +45,8 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("total-peptide-count and top-k must be positive")
     if args.top_k > args.total_peptide_count:
         raise ValueError("top-k cannot exceed total-peptide-count")
+    
+    ray.shutdown()
 
     config = SequenceConfig(args)
     config.results_path = str(output_dir)
@@ -70,13 +72,12 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     started_ray = False
 
     try:
-        ray.shutdown()
-
         if not ray.is_initialized():
             ray.init(
                 runtime_env={
                     "excludes": [
                         ".git/**",
+                        "./generate/**"
                         "SILO_amp/OmegAMP/data/generative-model-data/**",
                         "SILO_amp/OmegAMP/data/activity-data/**",
                     ],
