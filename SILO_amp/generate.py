@@ -77,9 +77,10 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
                 runtime_env={
                     "excludes": [
                         ".git/**",
-                        "generate/**"
-                        ".venv/**"
-                        "SILO_amp/.venv/**"
+                        "generate",
+                        "generate/**",
+                        ".venv/**",
+                        "SILO_amp/.venv/**",
                         "SILO_amp/OmegAMP/data/generative-model-data/**",
                         "SILO_amp/OmegAMP/data/activity-data/**",
                     ],
