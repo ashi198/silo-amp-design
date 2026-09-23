@@ -75,10 +75,11 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     started_ray = False
 
     try:
-        ray_worker._maybe_modify_runtime_env = (lambda runtime_env, _skip_env_hook: runtime_env or {})
         ray.shutdown()
 
         if not ray.is_initialized():
+            print("generate.py is calling ray.init")
+            print("Ray version:", ray.__version__)
             ray.init()
             started_ray = True
         print(f"Policy network is on device {config.training_device}")
