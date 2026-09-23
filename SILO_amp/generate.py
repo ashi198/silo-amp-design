@@ -19,7 +19,9 @@ import os
 os.environ["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"
 
 import ray, torch, os, argparse, copy
-import ray._private.worker as ray_worker
+import sys
+sys.stderr.write(">>> generate.py started\n")
+sys.stderr.flush()
 
 
 #PROJECT_ROOT = Path(__file__).resolve().parent
@@ -76,6 +78,8 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
 
     try:
         ray.shutdown()
+        sys.stderr.write(">>> entered generator Ray block\n")
+        sys.stderr.flush()
 
         if not ray.is_initialized():
             print("generate.py is calling ray.init")
