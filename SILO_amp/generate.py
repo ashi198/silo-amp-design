@@ -14,8 +14,10 @@ from .utils import inference, set_seed, write_submission_artifacts, candidate_re
 from .evaluation_metrics.utils import read_fasta_return_sequence_list, BigLibraryMetrics
 from .model.transformer_architecture import SequenceTransformer
 import pandas as pd
-import os 
+
+import os
 os.environ["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"
+
 import ray, torch, os, argparse, copy
 
 
@@ -24,8 +26,8 @@ import ray, torch, os, argparse, copy
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SILO for AMP design reproducible inference")
-    parser.add_argument("--checkpoint", type=Path, default='./inference_model')
-    parser.add_argument("--output_dir", type=Path, default='./results/test_repo')
+    parser.add_argument("--checkpoint", type=Path, default='./results/FT_3_1_GP_with_mdr/42/')
+    parser.add_argument("--output_dir", type=Path, default='./results/FT_3_1_GP_with_mdr_test_model')
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--total-peptide-count", type=int, default=50000)
@@ -75,6 +77,15 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
         ray.shutdown()
         if not ray.is_initialized():
             ray.init()
+            ray.init(runtime_env={
+            "excludes": [
+                ".git/",
+                "./SILO_amp/OmegAMP/data/",
+                "./SILO_amp/data/",
+                "./SILO_amp/apex/APEX_pathogen_models/",
+            ],
+        })
+            
             started_ray = True
         print(f"Policy network is on device {config.training_device}")
         network.to(network.device)
@@ -90,7 +101,7 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
             network_weights=network_weights,
             evalutor=evaluator)
         
-        #generated_50k_fasta_path = '/home/akhanna/AMP/SILO_for_ampdesign/results/with_double_aa/42/generated_50k_peptides_library.fasta'
+        #generated_50k_fasta_path = './results/test_better_model/generated_50k_peptides_library.fasta'
         
         #generated_50k_df = pd.read_csv('/home/akhanna/AMP/SILO_for_ampdesign/results/with_double_aa/42/generated_50k.csv')
 
