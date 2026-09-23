@@ -361,9 +361,9 @@ def write_submission_artifacts(
     population.sort(key=lambda row: (str(row["sequence"]), str(row.get("id", ""))))
     selected.sort(key=lambda row: (int(row.get("rank", 0)), str(row["sequence"]), str(row.get("id", ""))))
     files = {
-        "population_fasta": directory / "library_50k.fasta",
+        "population_fasta": directory / "library.fasta",
         "population_csv": directory / "library_50k.csv",
-        "top100_fasta": directory / "top_100.fasta",
+        "top100_fasta": directory / "top.fasta",
         "top100_csv": directory / "top_100.csv",
     }
     _write_fasta(files["population_fasta"], population)
