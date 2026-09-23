@@ -61,8 +61,6 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     config.self_improvement_learning["beam_width"] = 32
     os.makedirs(output_dir, exist_ok=True)
 
-    evaluator = SequenceEvaluator(config, torch.device(args.device))
-    big_library_worker = BigLibraryMetrics(config, config.training_device, evaluator)
     network = SequenceTransformer(config, config.training_device)
 
     set_seed(args.seed)
@@ -89,6 +87,8 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
         print(f"Policy network is on device {config.training_device}")
         network.to(network.device)
         network.eval()
+        evaluator = SequenceEvaluator(config, torch.device(args.device))
+        big_library_worker = BigLibraryMetrics(config, config.training_device, evaluator)
 
         network_weights = copy.deepcopy(network.get_weights())
 
