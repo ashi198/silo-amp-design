@@ -17,6 +17,7 @@ import pandas as pd
 import os
 os.environ["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"
 import ray, torch, os, argparse, copy
+from pathlib import Path
 
 
 #PROJECT_ROOT = Path(__file__).resolve().parent
@@ -57,6 +58,8 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     config.self_improvement_learning["devices_for_workers"] = [args.device]
     config.self_improvement_learning["beam_width"] = 32
     os.makedirs(output_dir, exist_ok=True)
+    if not output_path.is_absolute():
+      output_path = (project_root / output_path).resolve()
 
     network = SequenceTransformer(config, config.training_device)
 
@@ -69,22 +72,24 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     optimizer = torch.optim.Adam(network.parameters(), lr=config.optimizer["lr"], weight_decay=config.optimizer["weight_decay"])
     optimizer.load_state_dict(copy.deepcopy(checkpoint["optimizer_state"])) 
 
+    output_rel = output_path.relative_to(project_root).as_posix()
     runtime_env={
         "working_dir": str(project_root),
         "excludes": [
             ".git/**",
-            f"{output_dir}/**",
+            f"{output_rel}/**",
             ".venv/**",
             "SILO_amp/.venv/**",
             "SILO_amp/OmegAMP/data/generative-model-data/**",
             "SILO_amp/OmegAMP/data/activity-data/**",
         ],}
     
-    ray.init(runtime_env)
     print("Ray working directory:", runtime_env["working_dir"])
     print("Ray excludes:")
     for pattern in runtime_env["excludes"]:
         print(f"  - {pattern}")
+
+    ray.init(runtime_env=runtime_env)
     
     print(f"Policy network is on device {config.training_device}")
     network.to(network.device)
