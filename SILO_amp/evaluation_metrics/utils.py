@@ -212,8 +212,9 @@ class BigLibraryMetrics:
         marlys_results = mmseqs_marlys_similarity(config=config, query_fasta=path_to_generated_peptides, marlys_fasta=config.marlys_fasta)
         mmseqs_df = pd.DataFrame.from_dict(marlys_results, orient="index").reset_index(drop=True)
         generated_df = (generated_df.merge(apex_df, on="id", how="left", validate="one_to_one").merge(omegaamp_df, on="id", how="left", validate="one_to_one").merge(mmseqs_df, on="id", how="left", validate="one_to_one").merge(property_df, on="id", how="left", validate="one_to_one"))
+        generated_df_path = os.path.join(config.results_path, "generated_50k.csv")
 
-        generated_df.to_csv('/home/akhanna/AMP/SILO_for_ampdesign/results/with_double_aa/42/generated_50k.csv')
+        generated_df.to_csv(generated_df_path)
 
         return generated_df
     

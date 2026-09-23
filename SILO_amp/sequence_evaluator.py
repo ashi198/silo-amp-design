@@ -9,6 +9,8 @@ from typing import Any, Iterable, Mapping, Sequence
 from Bio import Align
 from .evaluation_metrics.metrics_utils import local_similarity, novelty_against_reference
 STANDARD_ALPHABET = frozenset("ACDEFGHIKLMNPQRSTVWY")
+from pathlib import Path
+PACKAGE_DIR = Path(__file__).resolve().parent
 
 @ray.remote
 class PredictorWorker:
