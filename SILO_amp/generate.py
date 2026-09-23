@@ -47,8 +47,6 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("total-peptide-count and top-k must be positive")
     if args.top_k > args.total_peptide_count:
         raise ValueError("top-k cannot exceed total-peptide-count")
-    
-    ray.shutdown()
 
     config = SequenceConfig(args)
     config.results_path = str(output_dir)
@@ -71,70 +69,62 @@ def run_inference(args: argparse.Namespace) -> dict[str, Any]:
     optimizer = torch.optim.Adam(network.parameters(), lr=config.optimizer["lr"], weight_decay=config.optimizer["weight_decay"])
     optimizer.load_state_dict(copy.deepcopy(checkpoint["optimizer_state"])) 
 
-    started_ray = False
+    runtime_env={
+        "working_dir": str(project_root),
+        "excludes": [
+            ".git/**",
+            f"{output_dir}/**",
+            ".venv/**",
+            "SILO_amp/.venv/**",
+            "SILO_amp/OmegAMP/data/generative-model-data/**",
+            "SILO_amp/OmegAMP/data/activity-data/**",
+        ],}
+    
+    ray.init(runtime_env)
+    print("Ray working directory:", runtime_env["working_dir"])
+    print("Ray excludes:")
+    for pattern in runtime_env["excludes"]:
+        print(f"  - {pattern}")
+    
+    print(f"Policy network is on device {config.training_device}")
+    network.to(network.device)
+    network.eval()
+    evaluator = SequenceEvaluator(config, torch.device(args.device))
+    big_library_worker = BigLibraryMetrics(config, config.training_device, evaluator)
 
-    try:
-        if not ray.is_initialized():
-            runtime_env={
-                "working_dir": str(project_root),
-                "excludes": [
-                    ".git/**",
-                    f"{output_dir}/**",
-                    ".venv/**",
-                    "SILO_amp/.venv/**",
-                    "SILO_amp/OmegAMP/data/generative-model-data/**",
-                    "SILO_amp/OmegAMP/data/activity-data/**",
-                ],}
-            ray.init(runtime_env)
-            print("Ray working directory:", runtime_env["working_dir"])
-            print("Ray excludes:")
-            for pattern in runtime_env["excludes"]:
-                print(f"  - {pattern}")
-            
-            started_ray = True
+    network_weights = copy.deepcopy(network.get_weights())
 
-        print(f"Policy network is on device {config.training_device}")
-        network.to(network.device)
-        network.eval()
-        evaluator = SequenceEvaluator(config, torch.device(args.device))
-        big_library_worker = BigLibraryMetrics(config, config.training_device, evaluator)
+    print("---Running SILO under reproducible sampling conditions to generate 50K library and top 100 candidate list ---")
 
-        network_weights = copy.deepcopy(network.get_weights())
+    generated_50k_fasta_path = inference(
+        epoch="submission",
+        config=config,
+        network_weights=network_weights,
+        evalutor=evaluator)
+    
+    #generated_50k_fasta_path = './results/test_better_model/generated_50k_peptides_library.fasta'
+    
+    #generated_50k_df = pd.read_csv('/home/akhanna/AMP/SILO_for_ampdesign/results/with_double_aa/42/generated_50k.csv')
 
-        print("---Running SILO under reproducible sampling conditions to generate 50K library and top 100 candidate list ---")
-
-        generated_50k_fasta_path = inference(
-            epoch="submission",
-            config=config,
-            network_weights=network_weights,
-            evalutor=evaluator)
-        
-        #generated_50k_fasta_path = './results/test_better_model/generated_50k_peptides_library.fasta'
-        
-        #generated_50k_df = pd.read_csv('/home/akhanna/AMP/SILO_for_ampdesign/results/with_double_aa/42/generated_50k.csv')
-
-        generated_50k_df = big_library_worker.calculate_metrics_big_library(config, generated_50k_fasta_path)
-        records = candidate_records_from_metrics(generated_50k_df.to_dict("records"))
-        references = read_fasta_return_sequence_list(config.antibacterial_fasta)
-        marlys_set = [sequence for _, sequence in read_fasta_return_sequence_list(config.marlys_fasta)]
-        training_set = read_fasta_return_sequence_list(config.training_fasta)
-        selection = select_candidates(records, references=references, training_amps=training_set, marlys_references=marlys_set, policy=SelectionPolicy(), top_k=args.top_k)
-        return write_submission_artifacts(
-            output_dir,
-            selection.valid_50k,
-            selection.selected,
-            metadata={
-                "mode": "root-legacy-runtime",
-                "seed": args.seed,
-                "selection_rejection_counts": selection.rejection_counts,
-            },
-            expected_50k=args.total_peptide_count,
-            expected_top_k=args.top_k,
-            config=config
-        )
-    finally:
-        if started_ray:
-            ray.shutdown()
+    generated_50k_df = big_library_worker.calculate_metrics_big_library(config, generated_50k_fasta_path)
+    records = candidate_records_from_metrics(generated_50k_df.to_dict("records"))
+    references = read_fasta_return_sequence_list(config.antibacterial_fasta)
+    marlys_set = [sequence for _, sequence in read_fasta_return_sequence_list(config.marlys_fasta)]
+    training_set = read_fasta_return_sequence_list(config.training_fasta)
+    selection = select_candidates(records, references=references, training_amps=training_set, marlys_references=marlys_set, policy=SelectionPolicy(), top_k=args.top_k)
+    return write_submission_artifacts(
+        output_dir,
+        selection.valid_50k,
+        selection.selected,
+        metadata={
+            "mode": "root-legacy-runtime",
+            "seed": args.seed,
+            "selection_rejection_counts": selection.rejection_counts,
+        },
+        expected_50k=args.total_peptide_count,
+        expected_top_k=args.top_k,
+        config=config
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -142,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     args.epoches = 1
     args.comments=None
     run_inference(args)
+    ray.shutdown()
     return 0
 
 
